@@ -1,6 +1,7 @@
 import os
 import ast
 import re
+from pathlib import Path
 from openai import OpenAI
 
 from tools import tools_docs, tools_func
@@ -8,8 +9,9 @@ from promptTemplate import initializationPrompt, toolboxPrompt
 
 class DeepSeek():
     def __init__(self, api_key=None, base_url=None, system_prompt=None, history_limit=20):
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-        self.language = os.getenv("lLANGUAGE") or "Chinese" 
+        self._load_env_file()
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY") or os.getenv("DEEPSEEK_API_KEY")
+        self.language = self._normalize_language(os.getenv("LANGUAGE") or "Chinese")
         self.base_url = base_url or os.getenv("OPENAI_BASE_URL", "https://api.deepseek.com/v1")
         self.model = "deepseek-chat"
         self.system_prompt = system_prompt or "You are a helpful assistant."
@@ -26,9 +28,50 @@ class DeepSeek():
         if self.api_key is None:
             raise ValueError("API key is required. Please set the OPENAI_API_KEY environment variable or pass it as an argument.")
 
+    def _load_env_file(self):
+        """从项目根目录加载 .env，避免依赖启动目录。"""
+        env_path = Path(__file__).resolve().parents[1] / ".env"
+        if not env_path.exists():
+            return
+
+        for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            # 这些是本项目自己的配置，允许 .env 覆盖系统环境变量。
+            if key and key in {"OPENAI_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_BASE_URL", "LANGUAGE", "BOT_LANGUAGE", "MODEL_LANGUAGE"}:
+                os.environ[key] = value
+            elif key and key not in os.environ:
+                os.environ[key] = value
+
     def clear_context(self):
         """清除对话上下文"""
         self.context.clear()
+
+    def _normalize_language(self, language):
+        """把环境变量里的 locale 值转换成模型更容易理解的自然语言描述。"""
+        language_value = (language or "").strip()
+        if not language_value:
+            return "Chinese"
+
+        language_lower = language_value.lower()
+        if language_lower in {"zh", "zh_cn", "zh-cn", "zh_hans", "chinese", "中文"}:
+            return "Chinese"
+        if language_lower in {"en", "en_us", "en-gb", "english", "英语"}:
+            return "English"
+
+        return language_value
+
+    def _format_tools_docs(self):
+        """把工具字典渲染成稳定的文本，避免把 dict 原样塞给模型。"""
+        lines = []
+        for tool_name, tool_desc in tools_docs.items():
+            lines.append(f"- {tool_name}: {tool_desc}")
+        return "\n".join(lines)
 
     def _build_messages(self, prompt=None):
         """构建消息列表：系统提示和历史对话；必要时再附加当前用户输入。"""
@@ -48,7 +91,7 @@ class DeepSeek():
         """把语言、工具说明和用户问题合成一条用户输入。"""
         return initializationPrompt.format(
             language=self.language,
-            tools_prompt=toolboxPrompt.format(Toolbox=tools_docs),
+            tools_prompt=toolboxPrompt.format(Toolbox=self._format_tools_docs()),
             question=prompt,
         )
 
@@ -88,6 +131,8 @@ class DeepSeek():
         if len(parsed_args) == 1:
             return tool(parsed_args[0])
 
+        print(f"模型调用工具 {tool_name}，传入参数: {parsed_args}")
+
         return tool(*parsed_args)
 
     def sendinfo(self, prompt, temperature=0.7, max_tokens=4000):
@@ -98,6 +143,8 @@ class DeepSeek():
 
         # 只允许有限轮工具调用，防止模型反复请求同一个工具导致死循环。
         for _ in range(self.max_tool_rounds):
+
+            print(f"第 {_ + 1} 轮模型交互，当前上下文消息: {messages}\n\n")
 
             response = self.client.chat.completions.create(
                 model=self.model,
@@ -117,6 +164,7 @@ class DeepSeek():
             if not tool_calls:
                 return reply
 
+            # print(f"调用工具: {[call['name'] for call in tool_calls]}")
             # 把工具调用结果回填给模型，进入下一轮继续生成最终回复。
             for tool_call in tool_calls:
                 tool_result = self._run_tool(tool_call["name"], tool_call["args"])
@@ -126,6 +174,7 @@ class DeepSeek():
                         "content": f"工具返回结果: {tool_call['name']}({tool_call['args']}) -> {tool_result}",
                     }
                 )
+                print(f"工具结果: {tool_call['name']} -> {tool_result}")
 
             messages = self._build_messages()
 
@@ -134,5 +183,5 @@ class DeepSeek():
 
 if __name__ == "__main__":
     deepseek = DeepSeek()
-    response = deepseek.sendinfo("帮我检查一下该设备的信息")
+    response = deepseek.sendinfo("帮我查看一下我的设备信息，包括CPU、内存和磁盘使用情况等")
     print(response)

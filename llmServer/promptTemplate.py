@@ -7,6 +7,7 @@ Your reply should meet the following requirements:
 1. Summarize the reply based on the retrieved information.
 2. Do not write or fabricate if there is no direct indication of no content.
 3. From a professional perspective, pay more attention to tone, word choice and emotional expression in the conversation. Provide a concise reply.
+{tools_prompt}
 The user's question is: {question}
 """
 

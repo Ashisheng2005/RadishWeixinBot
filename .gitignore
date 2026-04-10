@@ -8,5 +8,6 @@ __pycache__/
 *.ipynb
 *.bat
 .venv
+.env
 @AutomationLog.txt
  
