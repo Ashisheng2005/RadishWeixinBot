@@ -7,5 +7,6 @@ msgs.txt
 __pycache__/
 *.ipynb
 *.bat
+.venv
 @AutomationLog.txt
  
