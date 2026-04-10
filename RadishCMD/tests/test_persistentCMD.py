@@ -3,7 +3,10 @@ import threading
 import queue
 import time
 import os
+import sys
+from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 class PersistentShell:
     def __init__(self):
@@ -60,8 +63,9 @@ class PersistentShell:
         return ''.join(output_lines)
 
 
-# 使用
-shell = PersistentShell()
-shell.execute('cd ../../RadishGameTools')
-print(shell.execute('pnpm list'))
-print(shell.execute('ping 127.0.0.1'))
+if __name__ == '__main__':
+    # 使用
+    shell = PersistentShell()
+    shell.execute('cd ../')
+    print(shell.execute('git status'))
+    # print(shell.execute('ls -la'))

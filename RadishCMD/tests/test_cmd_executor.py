@@ -5,6 +5,10 @@
 # @Version：V 1.0
 # @File : test_cmd_executor.py
 # @desc :
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.CmdExecutor.core.executor import CMDExecutor
 import time
@@ -30,7 +34,7 @@ def example_usage():
     executor.register_callback('on_output', on_output_handler)
 
     # 执行命令(同步)
-    result = executor.execute_command("ping 127.0.0.1", wait=True)
+    result = executor.execute_command("ip a", wait=True)
     # print(f"执行结果是: {result.status}")
     # print(f"输出： {result.output}")
 
