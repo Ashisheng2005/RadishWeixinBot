@@ -138,16 +138,34 @@ class DeepSeek():
             return tool()
 
         try:
-            parsed_args = ast.literal_eval(f"({arg_text},)")
+            parsed_args, parsed_kwargs = self._parse_tool_arguments(arg_text)
         except (ValueError, SyntaxError):
             return f"工具参数解析失败: {tool_name}({arg_text})"
 
-        if len(parsed_args) == 1:
+        if len(parsed_args) == 1 and not parsed_kwargs:
             return tool(parsed_args[0])
 
-        print(f"模型调用工具 {tool_name}，传入参数: {parsed_args}")
+        print(f"模型调用工具 {tool_name}，传入参数: args={parsed_args}, kwargs={parsed_kwargs}\n")
 
-        return tool(*parsed_args)
+        return tool(*parsed_args, **parsed_kwargs)
+
+    def _parse_tool_arguments(self, arg_text):
+        """解析工具参数，支持位置参数和关键字参数，仅允许 Python 字面量。"""
+        expr = ast.parse(f"f({arg_text})", mode="eval")
+        call = expr.body
+        if not isinstance(call, ast.Call):
+            raise ValueError("参数格式不是函数调用")
+
+        args = tuple(ast.literal_eval(arg) for arg in call.args)
+
+        kwargs = {}
+        for keyword in call.keywords:
+            # 不允许 **kwargs 这种动态展开，避免扩大解析面。
+            if keyword.arg is None:
+                raise ValueError("不支持 **kwargs 语法")
+            kwargs[keyword.arg] = ast.literal_eval(keyword.value)
+
+        return args, kwargs
 
     def sendinfo(self, prompt, temperature=0.7, max_tokens=4000):
         # 先把用户问题整理成完整任务说明，再进入模型轮转。
@@ -158,7 +176,7 @@ class DeepSeek():
         # 只允许有限轮工具调用，防止模型反复请求同一个工具导致死循环。
         for _ in range(self.max_tool_rounds):
 
-            print(f"第 {_ + 1} 轮模型交互，当前上下文消息: {messages}\n\n")
+            # print(f"第 {_ + 1} 轮模型交互，当前上下文消息: {messages}\n\n")
 
             response = self.client.chat.completions.create(
                 model=self.model,
@@ -167,6 +185,8 @@ class DeepSeek():
                 max_tokens=max_tokens
             )
             reply = response.choices[0].message.content.strip()
+
+            print(reply, '\n')
 
             # 把模型输出写回上下文，后续轮次才能看到它做过什么判断。
             self.context.append({"role": "assistant", "content": reply})
@@ -188,7 +208,7 @@ class DeepSeek():
                         "content": f"工具返回结果: {tool_call['name']}({tool_call['args']}) -> {tool_result}",
                     }
                 )
-                print(f"工具结果: {tool_call['name']} -> {tool_result}")
+                print(f"工具结果: {tool_call['name']} -> \n{tool_result}")
 
             messages = self._build_messages()
 
@@ -197,5 +217,5 @@ class DeepSeek():
 
 if __name__ == "__main__":
     deepseek = DeepSeek()
-    response = deepseek.sendinfo("帮我分析一下这个项目：/home/repork/project/RolePlaySkill， 目录下有readme和claude文件，你可以读取文件内容并总结一下项目的主要功能和特点吗？")
+    response = deepseek.sendinfo("我现在在测试写入文本的工具，请使用 write_file 工具在当前目录下的 test.txt 文件中，分别测试三种模式，并返回测试结果,如果工具无法使用，请告诉我")
     print(response)

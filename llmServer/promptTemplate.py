@@ -22,3 +22,9 @@ When you need to use a certain tool, please follow the format below:
 If you don't need to use any tool, there is no need to reply with the relevant content.
 """
 
+# llm wiki prompt 通过wiki内容回答问题，要求不编造答案
+wikiPrompt = """You are a helpful assistant that can answer questions based on the provided wiki information. The wiki information is as follows:
+{wiki_info}
+Please answer the user's question based on the above wiki information. If the wiki information does not contain the answer, please say "I don't know". Do not make up an answer.
+The user's question is: {question}
+"""
