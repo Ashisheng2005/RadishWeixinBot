@@ -23,10 +23,10 @@ class DeepSeek():
         )
         # 只保存“真正参与对话”的消息，避免把大段模板重复塞进上下文。
         self.context = []
-        self.max_tool_rounds = 5
+        self.max_tool_rounds = 10
 
         if self.api_key is None:
-            raise ValueError("API key is required. Please set the OPENAI_API_KEY environment variable or pass it as an argument.")
+            raise ValueError("未设置 API 密钥，请在环境变量中配置 OPENAI_API_KEY 或 DEEPSEEK_API_KEY，或者在初始化时传入 api_key 参数。")
 
     def _load_env_file(self):
         """从项目根目录加载 .env，避免依赖启动目录。"""
@@ -51,6 +51,16 @@ class DeepSeek():
     def clear_context(self):
         """清除对话上下文"""
         self.context.clear()
+    
+    def _get_system_info(self):
+        """获取系统环境信息，供模型参考。"""
+        try:
+            import platform
+            system_info = f"{platform.system()} {platform.release()} ({platform.architecture()[0]})"
+            return system_info
+        except Exception as e:
+            print(f"获取系统信息失败: {e}")
+            return "Unknown System"
 
     def _normalize_language(self, language):
         """把环境变量里的 locale 值转换成模型更容易理解的自然语言描述。"""
@@ -90,8 +100,12 @@ class DeepSeek():
     def _build_user_prompt(self, prompt):
         """把语言、工具说明和用户问题合成一条用户输入。"""
         return initializationPrompt.format(
+            system_info=self._get_system_info(),
             language=self.language,
-            tools_prompt=toolboxPrompt.format(Toolbox=self._format_tools_docs()),
+            tools_prompt=toolboxPrompt.format(
+                Toolbox=self._format_tools_docs(),
+                current_dir=os.getcwd()
+                ),
             question=prompt,
         )
 
@@ -183,5 +197,5 @@ class DeepSeek():
 
 if __name__ == "__main__":
     deepseek = DeepSeek()
-    response = deepseek.sendinfo("帮我查看一下我的设备信息，包括CPU、内存和磁盘使用情况等")
+    response = deepseek.sendinfo("帮我分析一下这个项目：/home/repork/project/RolePlaySkill， 目录下有readme和claude文件，你可以读取文件内容并总结一下项目的主要功能和特点吗？")
     print(response)
