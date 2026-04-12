@@ -3,10 +3,11 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from RadishTools.src.CmdExecutor.core.executor import CMDExecutor
-from RadishTools.src.FileExecutor.core.ListDir import listDirExecutor
-from RadishTools.src.FileExecutor.core.ReadFile import readFileExecutor
-from RadishTools.src.FileExecutor.core.WriteFile import writeFileExecutor
+from RadishTools.src.CmdExecutor.core.executor import CMDExecutor, cmd_title, cmd_docs
+from RadishTools.src.FileExecutor.core.ListDir import *
+from RadishTools.src.FileExecutor.core.ReadFile import *
+from RadishTools.src.FileExecutor.core.WriteFile import *
+from RadishTools.src.FileExecutor.core.CreatePathOrFile import *
 
 
 def cmd(command):
@@ -29,22 +30,51 @@ def write_file(file_path, edits):
     executor = writeFileExecutor.from_json(file_path=file_path, edits_payload=edits)
     return executor.execute()
 
+def create_path_or_file(path, is_file=False):
+    executor = createPathOrFileExecutor(path=path, is_file=is_file)
+    return executor.execute()
+
+def tool_docs(tools_name: str):
+    content = ''
+    for name in tools_name.split(","):
+        tool_name = name.strip()
+        if tool_name in tools_docs:
+            content += f"{tool_name}: {tools_docs[tool_name]}\n"
+            # print(f"{tool_name}: {tools_docs[tool_name]}")
+        else:
+            content += f"No documentation available for tool: {tool_name}\n"
+            # print(f"No documentation available for tool: {tool_name}")
+    # return tools_docs.get(tool_name, "No documentation available for this tool.")
+    return content
 
 tools_docs = {
-    'cmd': 'cmd工具可以执行命令行指令，参数是一个字符串，表示要执行的命令，例如：<tools>cmd(\'ls -la\')</tools>',
-    'list_dir': 'list_dir工具可以列出指定目录下的文件和文件夹，参数是一个字符串，表示要列出的目录路径，例如：<tools>list_dir(\'./\')</tools>',
-    'read_file': 'read_file工具可以读取指定文件的内容，参数是一个字符串，表示要读取的文件路径，还可以指定可选参数start_line和end_line来读取文件的部分内容(不填写则默认获取全部),line_number是一个布尔值参数，设置给出内容是否包含行号，默认为False（当需要修改代码的时候可以在读取时候设置为True），例如：<tools>read_file(\'./main.py\', start_line=1, end_line=10, line_number=True)</tools>',
-    'write_file': 'write_file工具可以修改指定文件的内容，参数是一个字符串，表示要修改的文件路径，以及一个字符串edits列表，edits列表中的每个元素都是一个字典，包含以下字段：op（操作类型，可以是insert、delete或replace），start_line（起始行号，从1开始），end_line（结束行号，仅对delete和replace操作有效），new_text（新文本内容，仅对insert和replace操作有效）。例如：<tools>write_file(\'./main.py\', edits=‘[{"op": "replace", "start_line": 3, "end_line": 4, "new_text": "for i in range(5):\\n    print(i)"}, {"op": "insert", "start_line": 5, "new_text": "if __name__ == \'__main__\':\\n    print(\'Hello, World!\')"}]‘)</tools>'
+    'tool_docs': "tool_docs工具可以获取工具使用文档，参数是工具名称列表的字符串格式，字符串内的工具名称用英文逗号分隔，例如：<tools>tool_docs('cmd,list_dir')</tools>，可以一次返回多个工具的使用文档",
+    'cmd': cmd_docs,
+    'list_dir': ListDir_docs,
+    'read_file': ReadFile_docs,
+    'write_file': WriteFile_docs,
+    'create_path_or_file': createPathOrFile_docs
+}
+
+tools_title = {
+    'tool_docs': "tool_docs:获取工具使用文档的工具, 用法参考: <tools>tool_docs('cmd,list_dir')</tools>，可以一次返回多个工具的使用文档，参数是工具名称列表的字符串格式，字符串内的工具名称用英文逗号分隔",
+    'cmd': cmd_title,
+    'list_dir': ListDir_title,
+    'read_file': ReadFile_title,
+    'write_file': WriteFile_title,
+    'create_path_or_file': createPathOrFile_title
 }
 
 tools_func = {
     'cmd': cmd,
     'list_dir': list_dir,
     'read_file': read_file,
-    'write_file': write_file
+    'write_file': write_file,
+    'create_path_or_file': create_path_or_file,
+    'tool_docs': tool_docs
 }
 
 
 if __name__ == '__main__':
-    output = cmd("git status")
+    output = tool_docs('cmd,list_dir,read_file,write_file,create_path_or_file')
     print(output)

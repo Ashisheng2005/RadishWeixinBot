@@ -1,6 +1,9 @@
 
 import os
 
+ListDir_title = "listDirExecutor - 列出目录工具"
+ListDir_docs = 'list_dir工具可以列出指定目录下的文件和文件夹，参数是一个字符串，表示要列出的目录路径，例如：<tools>list_dir(\'./\')</tools>'
+
 class listDirExecutor:
     def __init__(self, path):
         self.path = path

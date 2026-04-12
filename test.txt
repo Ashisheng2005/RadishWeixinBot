@@ -1,6 +1,8 @@
 # 这是新插入的行
+# 这是insert模式测试
+print('insert操作测试成功')
 print('插入测试成功')
-for j in range(3):
-for i in range(5):
-    print(f'替换后的值: {i}')
+# 这是replace模式测试
+for k in range(4):
+    print(f'replace后的值: {k}')
     print('Hello, World!')

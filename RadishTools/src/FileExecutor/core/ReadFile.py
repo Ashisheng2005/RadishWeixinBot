@@ -1,7 +1,8 @@
 from os import path
 from pathlib import Path
-import sys
 
+ReadFile_title = "readFileExecutor - 读取文件工具"
+ReadFile_docs = "read_file工具可以读取指定文件的内容，参数是一个字符串，表示要读取的文件路径，还可以指定可选参数start_line和end_line来读取文件的部分内容(不填写则默认获取全部),line_number是一个布尔值参数，设置给出内容是否包含行号，默认为False（当需要修改代码的时候可以在读取时候设置为True），例如：<tools>read_file(\'./main.py\', start_line=1, end_line=10, line_number=True)</tools>"
 
 class readFileExecutor:
     def __init__(self, file_path, encoding='utf-8', start_line=None, end_line=None, line_number=False):

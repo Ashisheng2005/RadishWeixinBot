@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 from openai import OpenAI
 
-from tools import tools_docs, tools_func
+from tools import tools_docs, tools_func, tools_title
 from promptTemplate import initializationPrompt, toolboxPrompt
 
 class DeepSeek():
@@ -79,7 +79,7 @@ class DeepSeek():
     def _format_tools_docs(self):
         """把工具字典渲染成稳定的文本，避免把 dict 原样塞给模型。"""
         lines = []
-        for tool_name, tool_desc in tools_docs.items():
+        for tool_name, tool_desc in tools_title.items():
             lines.append(f"- {tool_name}: {tool_desc}")
         return "\n".join(lines)
 
@@ -217,5 +217,5 @@ class DeepSeek():
 
 if __name__ == "__main__":
     deepseek = DeepSeek()
-    response = deepseek.sendinfo("我现在在测试写入文本的工具，请使用 write_file 工具在当前目录下的 test.txt 文件中，分别测试三种模式，并返回测试结果,如果工具无法使用，请告诉我")
-    print(response)
+    response = deepseek.sendinfo("帮我创建一个名为 test_dir 的目录，并在里面创建一个名为 test_file.txt 的文件。文件内容为一种字符串匹配方法，用python编写")
+    # print(response)

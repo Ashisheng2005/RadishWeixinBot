@@ -22,6 +22,8 @@ from dataclasses import dataclass
 from typing import Optional, Callable, Union, List, Dict, Any
 from datetime import datetime
 
+cmd_title = "CMDExecutor - 命令行执行器组件"
+cmd_docs = "cmd工具可以执行命令行指令，参数是一个字符串，表示要执行的命令，例如：<tools>cmd('ls -la')</tools>"
 
 class CommandStatus(Enum):
     """命令执行转台枚举"""

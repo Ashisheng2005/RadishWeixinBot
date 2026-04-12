@@ -4,6 +4,8 @@ import tempfile
 from dataclasses import dataclass
 from typing import Any, List, Optional, Sequence
 
+WriteFile_title = "writeFileExecutor - 写入文件工具"
+WriteFile_docs = 'write_file工具可以修改指定文件的内容，参数是一个字符串，表示要修改的文件路径，以及一个字符串edits列表，edits列表中的每个元素都是一个字典，包含以下字段：op（操作类型，可以是insert、delete或replace），start_line（起始行号，从1开始），end_line（结束行号，仅对delete和replace操作有效），new_text（新文本内容，仅对insert和replace操作有效）。例如：<tools>write_file(\'./main.py\', edits=‘[{"op": "replace", "start_line": 3, "end_line": 4, "new_text": "for i in range(5):\\n    print(i)"}, {"op": "insert", "start_line": 5, "new_text": "if __name__ == \'__main__\':\\n    print(\'Hello, World!\')"}]‘)</tools>'
 
 @dataclass
 class LineEdit:
