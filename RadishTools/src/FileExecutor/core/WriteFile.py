@@ -26,6 +26,74 @@ class LineEdit:
     op: str = "replace"
     expected_old_lines: Optional[Sequence[str]] = None
 
+def parse_chunk_edits(code_chunk: str) -> List[LineEdit]:
+    """把 chunk 字符串解析为 LineEdit 列表。
+
+    支持格式:
+    <chunk:insert-1-end>...</chunk>
+    <chunk:replace-3-4>...</chunk>
+    <chunk:delete-5-6></chunk>
+    """
+    if not isinstance(code_chunk, str) or not code_chunk.strip():
+        raise ValueError("code_chunk 不能为空字符串")
+
+    pattern = re.compile(
+        r"<chunk:(insert|replace|delete)-(\d+)-(end|\d+)>(.*?)</chunk>",
+        re.DOTALL,
+    )
+
+    edits: List[LineEdit] = []
+    cursor = 0
+    matched = False
+
+    for idx, match in enumerate(pattern.finditer(code_chunk), start=1):
+        matched = True
+        # 只允许 chunk 之间存在空白字符，避免协议外文本混入。
+        if code_chunk[cursor:match.start()].strip():
+            raise ValueError(f"chunk #{idx}: 检测到无效文本，请仅输出 <chunk:...></chunk> 块")
+
+        op = match.group(1)
+        start_line = int(match.group(2))
+        end_token = match.group(3)
+        body = match.group(4)
+
+        if op == "insert":
+            if end_token != "end":
+                raise ValueError(f"chunk #{idx}: insert 结尾标记必须为 end")
+            if not body.strip():
+                raise ValueError(f"chunk #{idx}: insert 需要提供内容")
+            new_text = body.strip("\n")
+            edits.append(LineEdit(op="insert", start_line=start_line, end_line=None, new_lines=new_text.splitlines()))
+
+        elif op == "replace":
+            if end_token == "end":
+                raise ValueError(f"chunk #{idx}: replace 的 end_line 必须是数字")
+            if not body.strip():
+                raise ValueError(f"chunk #{idx}: replace 需要提供内容")
+            end_line = int(end_token)
+            new_text = body.strip("\n")
+            edits.append(LineEdit(op="replace", start_line=start_line, end_line=end_line, new_lines=new_text.splitlines()))
+
+        else:  # delete
+            if end_token == "end":
+                raise ValueError(f"chunk #{idx}: delete 的 end_line 必须是数字")
+            if body.strip():
+                raise ValueError(f"chunk #{idx}: delete 不应包含正文内容")
+            end_line = int(end_token)
+            edits.append(LineEdit(op="delete", start_line=start_line, end_line=end_line, new_lines=[]))
+
+        cursor = match.end()
+
+    if not matched:
+        raise ValueError("未检测到有效 chunk，格式示例: <chunk:insert-1-end>...</chunk>")
+
+    if code_chunk[cursor:].strip():
+        raise ValueError("chunk 末尾包含无效文本，请仅输出 <chunk:...></chunk> 块")
+
+    return edits
+
+
+
 
 def parse_line_edits(edits_payload: Any) -> List[LineEdit]:
     """把模型返回的 JSON 转换为 LineEdit 列表。
@@ -130,6 +198,26 @@ class writeFileExecutor:
         """从 JSON 字符串或对象构建执行器。"""
         edits = parse_line_edits(edits_payload)
         return cls(file_path=file_path, edits=edits, encoding=encoding)
+
+    @classmethod
+    def from_chunks(cls, file_path: str, code_chunk: str, encoding: str = 'utf-8'):
+        """从 chunk 字符串构建执行器。"""
+        edits = parse_chunk_edits(code_chunk)
+        return cls(file_path=file_path, edits=edits, encoding=encoding)
+
+    @classmethod
+    def from_payload(
+        cls,
+        file_path: str,
+        edits_payload: Any = None,
+        code_chunk: Optional[str] = None,
+        encoding: str = 'utf-8',
+    ):
+        """统一入口：优先使用 code_chunk，其次使用 edits_payload。"""
+        if code_chunk is not None:
+            return cls.from_chunks(file_path=file_path, code_chunk=code_chunk, encoding=encoding)
+        return cls.from_json(file_path=file_path, edits_payload=edits_payload, encoding=encoding)
+
 
     def execute(self):
         """按行范围应用编辑，并原子覆盖源文件。"""
@@ -270,23 +358,18 @@ class writeFileExecutor:
 
 
 if __name__ == "__main__":
-    # 示例：模型可直接返回 JSON，执行器负责解析为差量编辑。
-    edits_json = {
-        "edits": [
-            {
-                "op": "replace",
-                "start_line": 3,
-                "end_line": 4,
-                "new_text": "for i in range(5):\n    print(i)",
-            },
-            {
-                "op": "insert",
-                "start_line": 5,
-                "new_text": "if __name__ == '__main__':\n    print('Hello, World!')",
-            }
-        ]
-    }
+    # 不再使用json，直接使用字符串
+    code_chunk = '''<chunk:insert-1-end>
+for i in range():
+    print(i)
 
-    executor = writeFileExecutor.from_json(file_path='./test.txt', edits_payload=edits_json)
+</chunk>
+<chunk:replace-3-4>
+print()
+print()
+</chunk>
+<chunk:delete-5-6></chunk>'''
+
+    executor = writeFileExecutor.from_chunks(file_path="./test.txt", code_chunk=code_chunk)
     result = executor.execute()
     print(result)

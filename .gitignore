@@ -9,5 +9,6 @@ __pycache__/
 *.bat
 .venv
 .env
+config.yaml
 @AutomationLog.txt
  

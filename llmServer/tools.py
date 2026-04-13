@@ -26,8 +26,12 @@ def read_file(file_path, start_line=None, end_line=None, line_number=False):
     executor = readFileExecutor(file_path=file_path, start_line=start_line, end_line=end_line, line_number=line_number)
     return executor.execute()
 
-def write_file(file_path, edits):
-    executor = writeFileExecutor.from_json(file_path=file_path, edits_payload=edits)
+def write_file(file_path, edits=None, code_chunk=None):
+    executor = writeFileExecutor.from_payload(
+        file_path=file_path,
+        edits_payload=edits,
+        code_chunk=code_chunk,
+    )
     return executor.execute()
 
 def create_path_or_file(path, is_file=False):
