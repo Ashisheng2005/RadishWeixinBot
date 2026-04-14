@@ -7,7 +7,7 @@ from pathlib import Path
 from yamlConfig import Config
 from tools import tools_func, tools_title
 from promptTemplate import initializationPrompt, toolboxPrompt
-from CreateCodeNode import CreateCodeNodeExecutor
+# from CreateCodeNode import CreateCodeNodeExecutor
 
 from deepseek import DeepSeek
 
@@ -212,7 +212,11 @@ class Polling():
     
 if __name__ == "__main__":
     polling = Polling()
-    reply = CreateCodeNodeExecutor(code_file_path="/home/repork/project/RadishWeixinBot/llmServer/tools.py", wiki_file_path="./wiki/test.md",llmServer=polling.client) 
+    # reply = CreateCodeNodeExecutor(code_file_path="/home/repork/project/RadishWeixinBot/llmServer/CreateCodeNode.py", wiki_file_path="./wiki/test.md",llmServer=polling.client) 
+    # reply.execute()
+    from CreateProjectWiki import CreateProjectWikiExecutor
+    reply = CreateProjectWikiExecutor(project_path="/home/repork/project/RadishWeixinBot", wiki_root="./wiki", llm_server=polling.client) 
     reply.execute()
-    print('over')
+
+    print('project wiki successful!')
     # polling.sendinfo("请列出当前目录下的文件和文件夹，并读取其中一个文本文件的内容。")
