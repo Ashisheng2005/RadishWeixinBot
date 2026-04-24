@@ -1,0 +1,29 @@
+{
+  "basic_read": {
+    "description": "读取项目目录并读取 main.py，验证三段式总结",
+    "prompt": "请先调用tool_docs查看list_dir和read_file文档，然后列出E:/RadishWeixinBot目录，并读取E:/RadishWeixinBot/main.py，最后给出三段式总结。",
+    "expected_tools": [
+      "tool_docs",
+      "list_dir",
+      "read_file"
+    ],
+    "max_tool_calls": 6,
+    "max_latency_ms": 45000,
+    "max_tokens": 1200,
+    "require_three_section_output": true
+  },
+  "write_then_verify": {
+    "description": "创建文件并写入，再读取验证",
+    "prompt": "请先调用tool_docs查看create_path_or_file、write_file、read_file文档。创建E:/RadishWeixinBot/test_cli_flow.txt，写入三行A、B、C，再读取该文件并给出三段式总结。",
+    "expected_tools": [
+      "tool_docs",
+      "create_path_or_file",
+      "write_file",
+      "read_file"
+    ],
+    "max_tool_calls": 8,
+    "max_latency_ms": 60000,
+    "max_tokens": 1400,
+    "require_three_section_output": true
+  }
+}

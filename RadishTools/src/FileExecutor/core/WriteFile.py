@@ -1,11 +1,19 @@
 import os
 import json
+import re
 import tempfile
 from dataclasses import dataclass
 from typing import Any, List, Optional, Sequence
 
 WriteFile_title = "writeFileExecutor - 写入文件工具"
-WriteFile_docs = 'write_file工具可以修改指定文件的内容，参数是一个字符串，表示要修改的文件路径，以及一个字符串edits列表，edits列表中的每个元素都是一个字典，包含以下字段：op（操作类型，可以是insert、delete或replace），start_line（起始行号，从1开始），end_line（结束行号，仅对delete和replace操作有效），new_text（新文本内容，仅对insert和replace操作有效）。例如：<tools>write_file(\'./main.py\', edits=‘[{"op": "replace", "start_line": 3, "end_line": 4, "new_text": "for i in range(5):\\n    print(i)"}, {"op": "insert", "start_line": 5, "new_text": "if __name__ == \'__main__\':\\n    print(\'Hello, World!\')"}]‘)</tools>'
+WriteFile_docs = (
+    "write_file工具可以修改指定文件内容。建议传入纯JSON字符串 edits，不要附带解释文本。"
+    "标准字段：op/start_line/end_line/new_text；紧凑字段：op/s/e/t（与标准字段等价）。"
+    "op 支持 insert/delete/replace。"
+    "例如："
+    "<tools>write_file('./main.py', edits='[{\"op\":\"replace\",\"s\":3,\"e\":4,\"t\":\"for i in range(5):\\n    print(i)\"}]')</tools>。"
+    "常见错误：delete 传入 t、insert 传入 e、非JSON格式输入。"
+)
 
 @dataclass
 class LineEdit:
@@ -131,6 +139,14 @@ def parse_line_edits(edits_payload: Any) -> List[LineEdit]:
         if not isinstance(item, dict):
             raise ValueError(f"edit #{idx}: 每一项都必须是对象")
 
+        # 兼容 compact 协议：s/e/t 分别映射到 start_line/end_line/new_text
+        if "start_line" not in item and "s" in item:
+            item["start_line"] = item["s"]
+        if "end_line" not in item and "e" in item:
+            item["end_line"] = item["e"]
+        if "new_text" not in item and "t" in item:
+            item["new_text"] = item["t"]
+
         if "start_line" not in item:
             raise ValueError(f"edit #{idx}: 缺少 start_line")
 
@@ -181,10 +197,17 @@ def parse_line_edits(edits_payload: Any) -> List[LineEdit]:
 
 
 class writeFileExecutor:
-    def __init__(self, file_path: str, edits: Sequence[LineEdit], encoding: str = 'utf-8'):
+    def __init__(
+        self,
+        file_path: str,
+        edits: Sequence[LineEdit],
+        encoding: str = 'utf-8',
+        legacy_text_result: bool = False,
+    ):
         self.file_path = file_path
         self.edits = list(edits)
         self.encoding = encoding
+        self.legacy_text_result = legacy_text_result
 
         if not self.file_path:
             raise ValueError("file_path 不能为空")
@@ -194,16 +217,28 @@ class writeFileExecutor:
             raise ValueError("edits 不能为空")
 
     @classmethod
-    def from_json(cls, file_path: str, edits_payload: Any, encoding: str = 'utf-8'):
+    def from_json(
+        cls,
+        file_path: str,
+        edits_payload: Any,
+        encoding: str = 'utf-8',
+        legacy_text_result: bool = False,
+    ):
         """从 JSON 字符串或对象构建执行器。"""
         edits = parse_line_edits(edits_payload)
-        return cls(file_path=file_path, edits=edits, encoding=encoding)
+        return cls(file_path=file_path, edits=edits, encoding=encoding, legacy_text_result=legacy_text_result)
 
     @classmethod
-    def from_chunks(cls, file_path: str, code_chunk: str, encoding: str = 'utf-8'):
+    def from_chunks(
+        cls,
+        file_path: str,
+        code_chunk: str,
+        encoding: str = 'utf-8',
+        legacy_text_result: bool = False,
+    ):
         """从 chunk 字符串构建执行器。"""
         edits = parse_chunk_edits(code_chunk)
-        return cls(file_path=file_path, edits=edits, encoding=encoding)
+        return cls(file_path=file_path, edits=edits, encoding=encoding, legacy_text_result=legacy_text_result)
 
     @classmethod
     def from_payload(
@@ -212,11 +247,22 @@ class writeFileExecutor:
         edits_payload: Any = None,
         code_chunk: Optional[str] = None,
         encoding: str = 'utf-8',
+        legacy_text_result: bool = False,
     ):
         """统一入口：优先使用 code_chunk，其次使用 edits_payload。"""
         if code_chunk is not None:
-            return cls.from_chunks(file_path=file_path, code_chunk=code_chunk, encoding=encoding)
-        return cls.from_json(file_path=file_path, edits_payload=edits_payload, encoding=encoding)
+            return cls.from_chunks(
+                file_path=file_path,
+                code_chunk=code_chunk,
+                encoding=encoding,
+                legacy_text_result=legacy_text_result,
+            )
+        return cls.from_json(
+            file_path=file_path,
+            edits_payload=edits_payload,
+            encoding=encoding,
+            legacy_text_result=legacy_text_result,
+        )
 
 
     def execute(self):
@@ -235,10 +281,26 @@ class writeFileExecutor:
             # 原子方式写回文件，尽量避免写入中断导致文件损坏
             self._atomic_write(updated_lines)
             
-            return f"Successfully patched {self.file_path} with {len(self.edits)} edit(s)"
+            result = {
+                "ok": True,
+                "file": self.file_path,
+                "applied": len(self.edits),
+                "message": "write success",
+            }
+            if self.legacy_text_result:
+                return f"Successfully patched {self.file_path} with {len(self.edits)} edit(s)"
+            return result
         
         except Exception as e:
-            return f"Error writing to file: {e}"
+            result = {
+                "ok": False,
+                "file": self.file_path,
+                "applied": 0,
+                "error": str(e),
+            }
+            if self.legacy_text_result:
+                return f"Error writing to file: {e}"
+            return result
 
     def _read_lines(self) -> List[str]:
         # keepends=True 保留原文件换行信息，便于尽量保持风格一致

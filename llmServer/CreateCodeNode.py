@@ -28,20 +28,30 @@ class CreateCodeNodeExecutor:
         code_file_path,
         wiki_file_path,
         llmServer,
+        wiki_mode="index_only",
         max_chunk_lines=220,
         overlap_lines=15,
         short_chunk_line_threshold=40,
         short_chunk_batch_size=6,
         summary_max_workers=4,
+        summary_max_chars=80,
+        summary_sample_lines=6,
     ):
         self.code_file_path = code_file_path
         self.wiki_file_path = wiki_file_path
         self.llmServer = llmServer
+        # wiki_mode:
+        # - index_only: 默认轻量索引，避免产出过长
+        # - hybrid: 保留有限详情
+        # - full: 完整详情
+        self.wiki_mode = wiki_mode if wiki_mode in {"index_only", "hybrid", "full"} else "index_only"
         self.max_chunk_lines = max(50, int(max_chunk_lines))
         self.overlap_lines = max(0, int(overlap_lines))
         self.short_chunk_line_threshold = max(5, int(short_chunk_line_threshold))
         self.short_chunk_batch_size = max(2, int(short_chunk_batch_size))
         self.summary_max_workers = max(1, int(summary_max_workers))
+        self.summary_max_chars = max(30, int(summary_max_chars))
+        self.summary_sample_lines = max(2, int(summary_sample_lines))
 
     def execute(self):
         '''主执行函数，返回生成的知识库数据结构'''
@@ -266,6 +276,11 @@ class CreateCodeNodeExecutor:
     def _summarize_chunks(self, chunks: List[Dict[str, Any]]):
         short_chunks: List[Dict[str, Any]] = []
         long_chunks: List[Dict[str, Any]] = []
+        called_counter: Dict[str, int] = {}
+
+        for chunk in chunks:
+            for callee in chunk.get("called_custom_symbols", []):
+                called_counter[callee] = called_counter.get(callee, 0) + 1
 
         for chunk in chunks:
             if chunk.get("line_count", 0) <= self.short_chunk_line_threshold:
@@ -298,9 +313,20 @@ class CreateCodeNodeExecutor:
                         chunk["summary"] = summary_map.get(chunk["chunk_id"], "")
 
         # 阶段2：并发降级补齐缺失摘要（短块失败项 + 全部长块）。
-        fallback_targets = [
-            chunk for chunk in short_chunks if not chunk.get("summary")
-        ] + long_chunks
+        fallback_targets = [chunk for chunk in short_chunks if not chunk.get("summary")]
+
+        for chunk in long_chunks:
+            # 对长块做采样：仅为“关键块”调用模型，其余用占位短句，显著降低 token
+            base = chunk.get("symbol_base_name") or self._extract_symbol_base_name(chunk.get("symbol_name", ""))
+            is_important = (
+                chunk.get("symbol_type") == "environment"
+                or bool(chunk.get("called_custom_symbols"))
+                or called_counter.get(base, 0) > 0
+            )
+            if is_important:
+                fallback_targets.append(chunk)
+            else:
+                chunk["summary"] = "辅助实现，按需查看源码。"
 
         if fallback_targets:
             workers = min(self.summary_max_workers, len(fallback_targets))
@@ -322,18 +348,21 @@ class CreateCodeNodeExecutor:
 
         payload_chunks = []
         for chunk in chunks:
+            char_budget = self._summary_char_budget(chunk)
             payload_chunks.append(
                 {
                     "chunk_id": chunk["chunk_id"],
                     "symbol": f"{chunk['symbol_type']} {chunk['symbol_name']}",
                     "line_range": f"{chunk['start_line']}-{chunk['end_line']}",
+                    "summary_char_budget": char_budget,
                     "called_custom_symbols": chunk.get("called_custom_symbols", []),
-                    "content": chunk["content"],
+                    # 仅传片段摘要上下文，不传完整代码，减少 token
+                    "content_excerpt": self._build_content_excerpt(chunk.get("content", "")),
                 }
             )
 
         prompt = (
-            "你是代码分析助手。请为多个代码块分别生成 1-2 句中文简述，突出功能、输入输出或副作用。"
+            f"你是代码分析助手。请为多个代码块分别生成一句中文简述。每个块必须遵守 summary_char_budget 字段的字数上限。"
             "请结合 called_custom_symbols 给出描述。请严格返回 JSON 数组，不要 markdown，不要额外解释。"
             "JSON 格式: [{\"chunk_id\":\"...\",\"summary\":\"...\"}]\n\n"
             f"文件: {self.code_file_path}\n"
@@ -347,13 +376,14 @@ class CreateCodeNodeExecutor:
                 return {}
 
             summary_map: Dict[str, str] = {}
+            budget_map = {chunk["chunk_id"]: self._summary_char_budget(chunk) for chunk in chunks}
             for item in parsed:
                 if not isinstance(item, dict):
                     continue
                 chunk_id = str(item.get("chunk_id", "")).strip()
                 summary = str(item.get("summary", "")).strip()
                 if chunk_id and summary:
-                    summary_map[chunk_id] = summary[:500]
+                    summary_map[chunk_id] = summary[: budget_map.get(chunk_id, self.summary_max_chars)]
             return summary_map
         except Exception:
             return {}
@@ -392,16 +422,17 @@ class CreateCodeNodeExecutor:
 
     def _summarize_chunk(self, chunk: Dict[str, Any]) -> str:
         '''调用 LLM 生成代码块摘要，返回摘要文本'''
+        char_budget = self._summary_char_budget(chunk)
 
         prompt = (
-            "你是代码分析助手。请对以下代码块给出 1-2 句简述，突出功能、输入输出或副作用。"
+            f"你是代码分析助手。请对以下代码块给出一句中文简述（不超过{char_budget}字），突出功能或副作用。"
             "可以参考 called_custom_symbols。不要输出 Markdown 列表，不要复述代码。\n\n"
             f"文件: {chunk['file_path']}\n"
             f"符号: {chunk['symbol_type']} {chunk['symbol_name']}\n"
             f"行号: {chunk['start_line']}-{chunk['end_line']}\n"
             f"自实现调用: {', '.join(chunk.get('called_custom_symbols', [])) or '(none)'}\n"
-            "代码:\n"
-            f"{chunk['content']}"
+            "代码摘要片段:\n"
+            f"{self._build_content_excerpt(chunk.get('content', ''))}"
         )
 
         try:
@@ -411,9 +442,38 @@ class CreateCodeNodeExecutor:
                 value = reply.get("message") or reply.get("content") or str(reply)
             else:
                 value = str(reply)
-            return value.strip()[:500]
+            return value.strip()[:char_budget]
         except Exception as err:
             return f"摘要生成失败: {err}"
+
+    def _summary_char_budget(self, chunk: Dict[str, Any]) -> int:
+        """按重要度动态分配摘要长度：入口/编排块可略长，普通块更短。"""
+        budget = self.summary_max_chars
+        symbol_type = chunk.get("symbol_type")
+        call_count = len(chunk.get("called_custom_symbols", []))
+
+        if symbol_type == "environment":
+            budget = min(120, max(budget, 90))
+        elif symbol_type == "def" and call_count >= 2:
+            budget = min(110, max(budget, 85))
+        elif symbol_type == "def":
+            budget = min(budget, 80)
+        else:
+            budget = min(budget, 70)
+        return max(40, budget)
+
+    def _build_content_excerpt(self, content: str) -> str:
+        """构建低成本摘要输入片段：仅保留头尾少量行，减少 token。"""
+        lines = (content or "").splitlines()
+        if not lines:
+            return ""
+
+        take = min(self.summary_sample_lines, len(lines))
+        if len(lines) <= take * 2:
+            return "\n".join(lines)
+        head = lines[:take]
+        tail = lines[-take:]
+        return "\n".join(head + ["..."] + tail)
 
     def _write_result(self, result: Dict[str, Any]):
         output_dir = os.path.dirname(os.path.abspath(self.wiki_file_path))
@@ -442,6 +502,7 @@ class CreateCodeNodeExecutor:
             f"- Function Chunks: {len(function_chunks)}",
             f"- Class Chunks: {len(class_chunks)}",
             f"- Call Relations: {total_called_symbols}",
+            f"- Wiki Mode: {self.wiki_mode}",
             "",
             "## Recommended Reading Order",
             "",
@@ -482,13 +543,27 @@ class CreateCodeNodeExecutor:
                 f"| {index} | {symbol_label} | {chunk['symbol_type']} | {chunk['start_line']}-{chunk['end_line']} | {calls_text} | {summary_text} |"
             )
 
-        lines.extend([
-            "",
-            "## Detailed Chunks",
-            "",
-        ])
+        if self.wiki_mode == "index_only":
+            lines.extend(
+                [
+                    "",
+                    "> 当前为 index_only 模式：已省略详细 chunk 元数据与调用明细，以降低体积与 token 消耗。",
+                    "",
+                ]
+            )
+        else:
+            lines.extend([
+                "",
+                "## Detailed Chunks",
+                "",
+            ])
 
         for chunk in result["chunks"]:
+            if self.wiki_mode == "index_only":
+                continue
+            if self.wiki_mode == "hybrid" and chunk.get("line_count", 0) > self.short_chunk_line_threshold * 2:
+                continue
+
             relations = chunk.get("call_relations", [])
             relations_text = "\n".join(
                 f"- {relation['from_chunk_id']} -> {relation['to_symbol']} ({', '.join(relation['to_chunk_ids']) or 'unmapped'})"

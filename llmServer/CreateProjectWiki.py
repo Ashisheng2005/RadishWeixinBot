@@ -44,6 +44,9 @@ class CreateProjectWikiExecutor:
         llm_server,
         wiki_root: Optional[str] = None,
         ignore_dirs: Optional[List[str]] = None,
+        wiki_mode: str = "index_only",
+        summary_max_chars: int = 80,
+        summary_sample_lines: int = 6,
     ):
         self.project_path = os.path.abspath(project_path)
         self.llm_server = llm_server
@@ -51,6 +54,9 @@ class CreateProjectWikiExecutor:
         self.project_name = os.path.basename(self.project_path.rstrip(os.sep)) or "project"
         self.project_wiki_root = os.path.join(self.wiki_root, self.project_name)
         self.ignore_dirs = set(ignore_dirs or []) | self.DEFAULT_IGNORE_DIRS
+        self.wiki_mode = wiki_mode
+        self.summary_max_chars = int(summary_max_chars)
+        self.summary_sample_lines = int(summary_sample_lines)
 
     def execute(self) -> Dict[str, Any]:
         if not os.path.isdir(self.project_path):
@@ -75,6 +81,9 @@ class CreateProjectWikiExecutor:
                     code_file_path=file_path,
                     wiki_file_path=wiki_path,
                     llmServer=self.llm_server,
+                    wiki_mode=self.wiki_mode,
+                    summary_max_chars=self.summary_max_chars,
+                    summary_sample_lines=self.summary_sample_lines,
                 ).execute()
                 module_name = self._module_name_from_relative_path(rel_path)
                 call_relation_count = sum(
@@ -99,6 +108,9 @@ class CreateProjectWikiExecutor:
             "wiki_root": self.wiki_root,
             "project_wiki_root": self.project_wiki_root,
             "project_name": self.project_name,
+            "wiki_mode": self.wiki_mode,
+            "summary_max_chars": self.summary_max_chars,
+            "summary_sample_lines": self.summary_sample_lines,
             "generated_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
             "total_python_files": len(py_files),
             "success_count": len(file_results),
@@ -179,6 +191,9 @@ class CreateProjectWikiExecutor:
             f"- Project Path: {project_result['project_path']}",
             f"- Wiki Root: {project_result['wiki_root']}",
             f"- Project Wiki Root: {project_result['project_wiki_root']}",
+            f"- Wiki Mode: {project_result['wiki_mode']}",
+            f"- Summary Max Chars: {project_result['summary_max_chars']}",
+            f"- Summary Sample Lines: {project_result['summary_sample_lines']}",
             f"- Python Files: {project_result['total_python_files']}",
             f"- Success: {project_result['success_count']}",
             f"- Failed: {project_result['failed_count']}",

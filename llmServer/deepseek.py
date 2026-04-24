@@ -3,11 +3,13 @@ from openai import OpenAI
 class DeepSeek():
     def __init__(self, api_key=None, base_url=None, 
                  model=None,
-                 language=None):
+                 language=None,
+                 debug=False):
         self.api_key = api_key
         self.language = language
         self.base_url = base_url 
         self.model = model
+        self.debug = bool(debug)
         # self.history_limit = max(0, history_limit)
         self.client = OpenAI(
             api_key=self.api_key,
@@ -25,6 +27,14 @@ class DeepSeek():
             max_tokens=max_tokens
         )
         # print(f"DeepSeek API response: {response}")
-        return response.choices[0].message.content.strip()
+        content = (response.choices[0].message.content or "")
+        if self.debug:
+            finish_reason = response.choices[0].finish_reason
+            usage = getattr(response, "usage", None)
+            print(f"[deepseek.debug] finish_reason={finish_reason}")
+            print(f"[deepseek.debug] content_repr={repr(content)}")
+            if usage is not None:
+                print(f"[deepseek.debug] usage={usage}")
+        return content.strip()
     
     
