@@ -11,7 +11,13 @@ from pathlib import Path
 
 from yamlConfig import Config
 from tools import tools_func, tools_title
-from promptTemplate import initializationPrompt, toolboxPrompt, wikiPrompt
+from promptTemplate import (
+    commonPrompt,
+    initializationPrompt,
+    modePromptMap,
+    toolboxPrompt,
+    wikiPrompt,
+)
 # from CreateCodeNode import CreateCodeNodeExecutor
 
 from deepseek import DeepSeek
@@ -94,7 +100,7 @@ class Polling():
         self.verbose = bool(verbose)
         self.debug = bool(debug)
         self.status_callback = status_callback
-        self.last_intent_mode = "qa_task"
+        self.last_intent_mode = "ask"
 
         if self.api_key is None:
             raise ValueError("未设置 API 密钥，请在环境变量中配置 OPENAI_API_KEY 或 DEEPSEEK_API_KEY，或者在初始化时传入 api_key 参数。")
@@ -134,14 +140,22 @@ class Polling():
 
     def _detect_intent_mode(self, prompt: str) -> str:
         text = (prompt or "").lower()
-        code_keywords = [
-            "重写", "改写", "优化", "封装", "重构", "改造", "实现", "修复",
-            "rewrite", "refactor", "implement", "fix", "patch", "architecture",
-            "main.py", ".py", "代码",
+
+        agent_keywords = [
+            "重写", "改写", "优化", "封装", "重构", "改造", "实现", "修复", "更新", "修改", "新增",
+            "rewrite", "refactor", "implement", "fix", "patch", "update", "modify", "create",
+            ".py", ".js", ".ts", ".md", "代码", "文件",
         ]
-        if any(k in text for k in code_keywords):
-            return "code_task"
-        return "qa_task"
+        plan_keywords = [
+            "计划", "方案", "步骤", "流程", "路线", "评估", "先不要改", "先规划",
+            "plan", "roadmap", "workflow", "steps", "design", "approach",
+        ]
+
+        if any(k in text for k in agent_keywords):
+            return "agent"
+        if any(k in text for k in plan_keywords):
+            return "plan"
+        return "ask"
 
     def _is_sensitive_path(self, path_text: str) -> bool:
         if not path_text:
@@ -217,17 +231,21 @@ class Polling():
             messages.append({"role": "user", "content": prompt})
         return messages
 
-    def _build_user_prompt(self, prompt):
+    def _build_user_prompt(self, prompt, intent_mode: str):
         """把语言、工具说明和用户问题合成一条用户输入。"""
         wiki_context = self._build_wiki_context(prompt)
         extra_context = f"\n\nRelevant wiki snippets:\n{wiki_context}" if wiki_context else ""
         return initializationPrompt.format(
-            system_info=self._get_system_info(),
-            language=self.language,
+            common_prompt=commonPrompt.format(
+                system_info=self._get_system_info(),
+                language=self.language,
+            ),
+            task_mode=intent_mode,
+            mode_prompt=modePromptMap.get(intent_mode, modePromptMap["ask"]),
             tools_prompt=toolboxPrompt.format(
                 Toolbox=self._format_tools_docs(),
                 current_dir=os.getcwd()
-                ),
+            ),
             question=f"{prompt}{extra_context}",
         )
     
@@ -486,7 +504,7 @@ class Polling():
         self.context_summary = (self.context_summary + " | " + summary).strip(" |")[: self.context_summary_max_chars]
         self.context = self.context[-self.history_limit * 2:]
 
-    def _postprocess_reply(self, reply: str, max_output_chars: int, mode: str = "qa_task") -> str:
+    def _postprocess_reply(self, reply: str, max_output_chars: int, mode: str = "ask") -> str:
         """输出后处理：去冗余、压缩空白、保留结构化关键字段。"""
         text = (reply or "").strip()
         if not text:
@@ -508,7 +526,7 @@ class Polling():
             seen.add(key)
             lines.append(line)
         text = "\n".join(lines)
-        if mode == "qa_task":
+        if mode == "ask":
             text = self._enforce_three_section_format(text)
             text = self._render_natural_reply(text)
         return text[: max_output_chars]
@@ -578,12 +596,12 @@ class Polling():
     
     def sendinfo(self, prompt, temperature=0.7, max_tokens=4000):
         # 先把用户问题整理成完整任务说明，再进入模型轮转。
-        user_prompt = self._build_user_prompt(prompt)
+        self.last_intent_mode = self._detect_intent_mode(prompt)
+        user_prompt = self._build_user_prompt(prompt, self.last_intent_mode)
         self.context.append({"role": "user", "content": user_prompt})
         messages = self._build_messages()
 
         # 只允许有限轮工具调用，防止模型反复请求同一个工具导致死循环。
-        self.last_intent_mode = self._detect_intent_mode(prompt)
         selected_max_tokens, selected_max_output_chars, profile_name = self._choose_response_profile(prompt)
         tool_round_count = 0
         total_tool_calls = 0
@@ -635,7 +653,7 @@ class Polling():
                     continue
                 fallback = (
                     "模型暂时没有返回有效内容。建议你把目标拆成两步：先确认要修改的文件与范围，再要求输出具体改造步骤。"
-                    if self.last_intent_mode == "code_task"
+                    if self.last_intent_mode == "agent"
                     else "模型暂时没有返回有效内容，请稍后重试。"
                 )
                 return fallback

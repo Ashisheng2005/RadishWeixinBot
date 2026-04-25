@@ -25,5 +25,92 @@
     "max_latency_ms": 60000,
     "max_tokens": 1400,
     "require_three_section_output": true
+  },
+  "write_replace_success": {
+    "description": "对已存在文件执行单条 replace，验证成功路径",
+    "prompt": "请调用 write_file 修改 E:/RadishWeixinBot/test_write.txt 第1行为“测试write_file工具(已更新)”，然后读取文件确认。",
+    "expected_tools": [
+      "write_file",
+      "read_file"
+    ],
+    "max_tool_calls": 4,
+    "max_latency_ms": 30000,
+    "max_tokens": 1000,
+    "require_three_section_output": false,
+    "expect_write_ok": true
+  },
+  "write_insert_tail_success": {
+    "description": "在文件末尾 insert，验证插入成功",
+    "prompt": "请调用 write_file 在 E:/RadishWeixinBot/test_write.txt 文件末尾追加一行“TAIL_LINE”，并读取确认。",
+    "expected_tools": [
+      "write_file",
+      "read_file"
+    ],
+    "max_tool_calls": 4,
+    "max_latency_ms": 30000,
+    "max_tokens": 1000,
+    "require_three_section_output": false,
+    "expect_write_ok": true
+  },
+  "write_delete_success": {
+    "description": "删除指定区间，验证 delete 正常执行",
+    "prompt": "请调用 write_file 删除 E:/RadishWeixinBot/test_write.txt 的第1行，并读取确认。",
+    "expected_tools": [
+      "write_file",
+      "read_file"
+    ],
+    "max_tool_calls": 4,
+    "max_latency_ms": 30000,
+    "max_tokens": 1000,
+    "require_three_section_output": false,
+    "expect_write_ok": true
+  },
+  "write_invalid_json_failure": {
+    "description": "edits 非 JSON，验证 invalid_arguments",
+    "prompt": "请调用 write_file(file_path='E:/RadishWeixinBot/test_write.txt', edits='not-json') 并返回错误类型。",
+    "expected_tools": [
+      "write_file"
+    ],
+    "max_tool_calls": 2,
+    "max_latency_ms": 20000,
+    "max_tokens": 800,
+    "require_three_section_output": false,
+    "expect_error_type": "invalid_arguments"
+  },
+  "write_delete_with_t_failure": {
+    "description": "delete 携带 t，验证 invalid_arguments",
+    "prompt": "请调用 write_file 删除 E:/RadishWeixinBot/test_write.txt 的第1行，但错误地附带 t 字段，并返回错误类型。",
+    "expected_tools": [
+      "write_file"
+    ],
+    "max_tool_calls": 2,
+    "max_latency_ms": 20000,
+    "max_tokens": 800,
+    "require_three_section_output": false,
+    "expect_error_type": "invalid_arguments"
+  },
+  "write_range_out_failure": {
+    "description": "行号越界，验证 range_out_of_bounds",
+    "prompt": "请调用 write_file 修改 E:/RadishWeixinBot/test_write.txt 的第9999行，并返回错误类型。",
+    "expected_tools": [
+      "write_file"
+    ],
+    "max_tool_calls": 2,
+    "max_latency_ms": 20000,
+    "max_tokens": 800,
+    "require_three_section_output": false,
+    "expect_error_type": "range_out_of_bounds"
+  },
+  "write_conflict_failure": {
+    "description": "expected_old_lines 冲突，验证 conflict_detected",
+    "prompt": "请调用 write_file 修改 E:/RadishWeixinBot/test_write.txt 第1行，expected_old_lines 传入明显错误内容，并返回错误类型。",
+    "expected_tools": [
+      "write_file"
+    ],
+    "max_tool_calls": 2,
+    "max_latency_ms": 20000,
+    "max_tokens": 800,
+    "require_three_section_output": false,
+    "expect_error_type": "conflict_detected"
   }
 }

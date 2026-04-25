@@ -7,13 +7,40 @@ from typing import Any, List, Optional, Sequence
 
 WriteFile_title = "writeFileExecutor - 写入文件工具"
 WriteFile_docs = (
-    "write_file工具可以修改指定文件内容。建议传入纯JSON字符串 edits，不要附带解释文本。"
+    "write_file工具用于按行差量修改文件，推荐主协议为 edits(JSON)。"
     "标准字段：op/start_line/end_line/new_text；紧凑字段：op/s/e/t（与标准字段等价）。"
-    "op 支持 insert/delete/replace。"
-    "例如："
+    "op 仅支持 insert/delete/replace。"
+    "高频正确示例："
     "<tools>write_file('./main.py', edits='[{\"op\":\"replace\",\"s\":3,\"e\":4,\"t\":\"for i in range(5):\\n    print(i)\"}]')</tools>。"
-    "常见错误：delete 传入 t、insert 传入 e、非JSON格式输入。"
+    "<tools>write_file('./main.py', edits='[{\"op\":\"insert\",\"s\":10,\"t\":\"print(\\\"tail\\\")\"}]')</tools>。"
+    "<tools>write_file('./main.py', edits='[{\"op\":\"delete\",\"s\":8,\"e\":9}]')</tools>。"
+    "code_chunk 仅作为兼容输入。常见错误：delete 传入 t、insert 传入 e、非JSON格式输入。"
+    "若返回 invalid_arguments，请按 error/hint 修正参数后重试。"
 )
+
+
+def classify_write_error(exc: Exception):
+    """将底层异常归一为稳定错误码，便于模型修参重试。"""
+    if isinstance(exc, FileNotFoundError):
+        return "path_not_found", "请确认 file_path 存在且可访问。"
+    if isinstance(exc, IsADirectoryError):
+        return "not_a_file", "file_path 必须是文件而不是目录。"
+
+    message = str(exc)
+    lowered = message.lower()
+
+    if "冲突检测失败" in message:
+        return "conflict_detected", "目标内容已变化，请先 read_file 后按最新内容重试。"
+    if "超出文件总行数" in message or "超出可插入范围" in message or "行号必须" in message:
+        return "range_out_of_bounds", "请检查 s/e 行号范围是否在文件可编辑区间。"
+    if "json" in lowered or "缺少" in message or "必须提供" in message or "不应提供" in message:
+        return "invalid_arguments", "请使用合法 edits(JSON)；delete 不带 t，insert 不带 e。"
+    if "op=" in message and "不支持" in message:
+        return "invalid_arguments", "op 仅支持 insert/delete/replace。"
+    if isinstance(exc, (OSError, UnicodeError)):
+        return "io_error", "文件读写失败，请检查编码、权限或文件占用。"
+
+    return "io_error", "写入失败，请检查参数、权限和目标文件状态后重试。"
 
 @dataclass
 class LineEdit:
@@ -211,8 +238,10 @@ class writeFileExecutor:
 
         if not self.file_path:
             raise ValueError("file_path 不能为空")
+        if not os.path.exists(self.file_path):
+            raise FileNotFoundError(f"{self.file_path} does not exist")
         if not os.path.isfile(self.file_path):
-            raise ValueError(f"{self.file_path} is not a valid file path.")
+            raise IsADirectoryError(f"{self.file_path} is not a file")
         if not self.edits:
             raise ValueError("edits 不能为空")
 
@@ -292,11 +321,14 @@ class writeFileExecutor:
             return result
         
         except Exception as e:
+            error_type, hint = classify_write_error(e)
             result = {
                 "ok": False,
                 "file": self.file_path,
                 "applied": 0,
+                "error_type": error_type,
                 "error": str(e),
+                "hint": hint,
             }
             if self.legacy_text_result:
                 return f"Error writing to file: {e}"

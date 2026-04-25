@@ -7,7 +7,7 @@ from llmPolling import Polling
 HELP_TEXT = """可用命令:
 /help                显示帮助
 /clear               清空会话上下文
-/mode                查看当前任务模式（qa_task/code_task）
+/mode                查看当前任务模式（ask/plan/agent）
 /debug on|off        打开/关闭调试输出
 /exit                退出
 """

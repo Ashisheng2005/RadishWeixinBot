@@ -74,6 +74,30 @@ def read_file(file_path, start_line=None, end_line=None, line_number=False):
     return executor.execute()
 
 def write_file(file_path, edits=None, code_chunk=None, legacy_text_result=False):
+    if not file_path:
+        return {
+            "ok": False,
+            "tool": "write_file",
+            "error_type": "invalid_arguments",
+            "error": "file_path 不能为空",
+            "hint": "请传入目标文件路径，例如: write_file('./main.py', edits='[...]')",
+        }
+    if edits is None and code_chunk is None:
+        return {
+            "ok": False,
+            "tool": "write_file",
+            "error_type": "invalid_arguments",
+            "error": "edits 和 code_chunk 不能同时为空",
+            "hint": "优先传 edits(JSON)，例如 [{'op':'replace','s':3,'e':4,'t':'...'}]",
+        }
+    if edits is not None and code_chunk is not None:
+        return {
+            "ok": False,
+            "tool": "write_file",
+            "error_type": "invalid_arguments",
+            "error": "edits 和 code_chunk 不能同时提供",
+            "hint": "请二选一；推荐使用 edits(JSON) 主协议。",
+        }
     executor = writeFileExecutor.from_payload(
         file_path=file_path,
         edits_payload=edits,
