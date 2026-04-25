@@ -13,6 +13,7 @@ HELP_TEXT = """可用命令:
 """
 
 
+# 构建命令行参数解析器
 def build_parser():
     parser = argparse.ArgumentParser(description="Radish AI 交互控制台")
     parser.add_argument("--debug", action="store_true", help="启动时开启调试输出")
@@ -34,7 +35,7 @@ def main():
     bot = Polling(verbose=args.verbose, debug=args.debug, status_callback=on_status)
 
     print("Radish AI Console")
-    print("输入 /help 查看命令，/exit 退出。")
+    print("Ciallo~ 输入 /help 查看命令，/exit 退出。")
 
     while True:
         try:

@@ -24,10 +24,13 @@ class DeepSeek():
             model=self.model,
             messages=messages,
             temperature=temperature,
-            max_tokens=max_tokens
+            max_tokens=max_tokens,
+            stream=False,
+            extra_body={"thinking": {"type": "disabled"}}
         )
         # print(f"DeepSeek API response: {response}")
-        content = (response.choices[0].message.content or "")
+        # content = (response.choices[0].message.content or "")
+        content = response.choices[0].message.content
         if self.debug:
             finish_reason = response.choices[0].finish_reason
             usage = getattr(response, "usage", None)
