@@ -25,7 +25,7 @@
 ### 4. 工具调用收敛
 - 统一工具回填 JSON 结构，避免自然语言歧义。
 - 对错误做类型化（参数错误、工具不存在等），限制可重试次数。
-- `write_file` 默认 compact 协议，并保留 legacy 回退。
+- `write_file` 统一走 v2 内核，主协议为 `edits(JSON)`（兼容 compact `op/s/e/t`）。
 
 ### 5. 可观测性与 A/B 验证
 - 记录每次交互的关键指标：工具轮次、工具调用数、回复长度。
@@ -44,9 +44,8 @@
   - 摘要请求仅传片段；
   - 引入动态摘要字数预算。
 - `RadishTools/src/FileExecutor/core/WriteFile.py`：
-  - 支持 compact 字段 `op/s/e/t`；
-  - 默认结构化返回；
-  - 支持 `legacy_text_result` 回退。
+  - 历史实现保留用于兼容参考；
+  - llm tools 默认链路已切换到 v2 写入服务。
 
 ## A/B 验证建议
 - 问题集：20-50 条固定样本（问答/工具/代码三类均衡）。

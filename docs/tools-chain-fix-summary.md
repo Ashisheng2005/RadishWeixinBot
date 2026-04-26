@@ -52,6 +52,10 @@
 - `llmServer/promptTemplate.py` 增补工具规则：
   - `invalid_arguments` 后需修正参数重试；
   - `write_file` 使用 compact 格式优先。
+- `llmServer/tools.py` 写入链路更新：
+  - `write_file` 已直接切换到 v2 内核；
+  - 禁用 `code_chunk` 输入，统一 `edits(JSON)`；
+  - 返回契约统一为 `error_code/retryable/suggested_action/diagnostics`。
 
 ## 验证结果
 - 语法检查：`compileall` 通过。
