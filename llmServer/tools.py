@@ -15,6 +15,9 @@ from RadishTools.src.FileExecutor.core.CreatePathOrFile import *
 
 def cmd(command, encoding=None):
     """执行命令，编码优先级：入参 > 环境变量 > 系统首选编码。"""
+    print(f"llm execute cmd: {command}\n")
+
+
     candidates = []
     if encoding:
         candidates.append(str(encoding))
@@ -48,11 +51,15 @@ def cmd(command, encoding=None):
     return f"cmd执行失败: {last_error}"
 
 def list_dir(path):
+    print(f"llm list dir: {path}")
+
     executor = listDirExecutor(path=path)
     executor.build_tree()
     return executor.get_tree()
 
 def read_file(file_path, start_line=None, end_line=None, line_number=False):
+    print(f"llm read file: {file_path}, { {start_line, '-', end_line} if start_line else 'all'}")
+
     normalized = str(file_path).replace("\\", "/").lower()
     basename = normalized.split("/")[-1]
     deny_patterns = [".env", "config.yaml", "config.yml", "*.key", "*secret*", "credentials.json"]
@@ -73,22 +80,22 @@ def read_file(file_path, start_line=None, end_line=None, line_number=False):
     executor = readFileExecutor(file_path=file_path, start_line=start_line, end_line=end_line, line_number=line_number)
     return executor.execute()
 
-def write_file(file_path, edits=None, code_chunk=None, legacy_text_result=False):
-    if code_chunk is not None:
-        return {
-            "ok": False,
-            "tool": "write_file",
-            "error_code": "invalid_arguments",
-            "error": "write_file 已切换到 v2 内核，不再支持 code_chunk",
-            "retryable": True,
-            "suggested_action": "use_edits_json_then_retry",
-            "diagnostics": [],
-        }
-    # 直接使用 v2 内核，保留 write_file 入口名以兼容调用方
-    return write_file_v2_execute(
-        file_path=file_path,
-        edits=edits,
-    )
+# def write_file(file_path, edits=None, code_chunk=None, legacy_text_result=False):
+#     if code_chunk is not None:
+#         return {
+#             "ok": False,
+#             "tool": "write_file",
+#             "error_code": "invalid_arguments",
+#             "error": "write_file 已切换到 v2 内核，不再支持 code_chunk",
+#             "retryable": True,
+#             "suggested_action": "use_edits_json_then_retry",
+#             "diagnostics": [],
+#         }
+#     # 直接使用 v2 内核，保留 write_file 入口名以兼容调用方
+#     return write_file_v2_execute(
+#         file_path=file_path,
+#         edits=edits,
+#     )
 
 
 def write_file_v2(
@@ -100,6 +107,9 @@ def write_file_v2(
     return_patch=False,
     conflict_mode="strict",
 ):
+    # 显示具体修改了那个文件
+    print(f"llm write {file_path}")
+
     return write_file_v2_execute(
         file_path=file_path,
         edits=edits,
@@ -112,6 +122,8 @@ def write_file_v2(
 
 
 def create_path_or_file(path, is_file=False):
+    print(f"llm create path or file: {path}, is_file: {is_file}")
+
     executor = createPathOrFileExecutor(path=path, is_file=is_file)
     return executor.execute()
 
@@ -149,8 +161,8 @@ tools_docs = {
     'cmd': cmd_docs,
     'list_dir': ListDir_docs,
     'read_file': ReadFile_docs,
+    # 'write_file': WriteFileV2_docs,
     'write_file': WriteFileV2_docs,
-    'write_file_v2': WriteFileV2_docs,
     'create_path_or_file': createPathOrFile_docs
 }
 
@@ -159,8 +171,8 @@ tools_title = {
     'cmd': cmd_title,
     'list_dir': ListDir_title,
     'read_file': ReadFile_title,
+    # 'write_file': WriteFileV2_title,
     'write_file': WriteFileV2_title,
-    'write_file_v2': WriteFileV2_title,
     'create_path_or_file': createPathOrFile_title
 }
 
@@ -168,8 +180,8 @@ tools_func = {
     'cmd': cmd,
     'list_dir': list_dir,
     'read_file': read_file,
-    'write_file': write_file,
-    'write_file_v2': write_file_v2,
+    # 'write_file': write_file,
+    'write_file': write_file_v2,
     'create_path_or_file': create_path_or_file,
     'tool_docs': tool_docs
 }

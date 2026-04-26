@@ -62,7 +62,7 @@ class CMDExecutor:
                  work_dir: Optional[str] = None,
                  env: Optional[str] = None,
                  timeout: Optional[float] = None,
-                 max_output_size: int = 1000000
+                 max_output_size: int = 10000
                  ):
         """
         初始化CMD执行器

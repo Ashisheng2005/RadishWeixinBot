@@ -1,5 +1,6 @@
 import argparse
 import traceback
+import time
 
 from llmPolling import Polling
 
@@ -39,12 +40,27 @@ def main():
 
     bot = Polling(verbose=args.verbose, debug=args.debug, status_callback=on_status)
 
-    print("Radish AI Console")
-    print("Ciallo~ 输入 /help 查看命令，/exit 退出。")
+    print("{:-^130}".format(" \033[91mRadish AI Console \033[0m"))
+
+    # 模拟加载过程，展示彩色进度条
+    for i in range(101):
+        bar = "█" * i + "░" * (100 - i)
+        print(f"\r\033[90m加载中: [{bar}] {i}%\033[0m", end="")
+        time.sleep(0.01)
+
+    print(f"\r\033[92m加载完成: [{bar}] {i}%\033[0m", end="")
+    time.sleep(0.5)
+    print("\r", end='')  # 清除加载进度条
+
+    # print(f"{'-' * 10} Radish AI Console {'-' * 10}")
+    # 输出粉色的欢迎信息，提示用户输入 /help 查看命令
+    print("{:^130}".format(f"\033[96m {bot.model} 1M \033[0m") )
+    print("{:^120}".format("\033[95mCiallo~ 输入 /help 查看命令，/exit 退出。\033[0m") )
+    print("-" * 121)
 
     while True:
         try:
-            user_input = input("Radish AI > ").strip()
+            user_input = input(f"(\033[92m{bot.get_mode()}\033[0m) Radish AI > ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\nBye.")
             break
@@ -53,7 +69,7 @@ def main():
             continue
 
         if user_input == "/exit":
-            print("Bye.")
+            print("Bye. see you next time!")
             break
         if user_input == "/help":
             print(HELP_TEXT)
@@ -123,7 +139,7 @@ def main():
             continue
 
         try:
-            reply = bot.sendinfo(user_input, temperature=0.2, max_tokens=1600)
+            reply = bot.sendinfo(user_input, temperature=0.2, max_tokens=3600)
             last_status["message"] = ""
             print(reply)
         except Exception as err:

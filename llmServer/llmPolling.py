@@ -167,7 +167,7 @@ class Polling():
     def _show_tool_indicator(self, tool_name: str):
         if self.debug:
             return
-        print(f"tools:{tool_name}")
+        # print(f"tools:{tool_name}")
 
     def _emit_status(self, message: str):
         """向外层 console 发状态信号。"""
@@ -864,6 +864,9 @@ class Polling():
 
             tool_calls = self._parse_tool_calls(reply)
             if "<tools>" in str(reply) and not tool_calls:
+                # 剔出文端中非工具调用的部分，并输出
+                print(reply.split("<tools>")[0].strip())
+
                 malformed_tool_call_retries += 1
                 if malformed_tool_call_retries > self.malformed_tool_call_retry_limit:
                     return (
