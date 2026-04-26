@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from RadishTools.src.CmdExecutor.core.executor import CMDExecutor, cmd_title, cmd_docs
 from RadishTools.src.FileExecutor.core.ListDir import *
 from RadishTools.src.FileExecutor.core.ReadFile import *
-from RadishTools.src.FileExecutor.core.WriteFile import *
+from RadishTools.src.FileExecutor.core.WriteFileV2 import *
 from RadishTools.src.FileExecutor.core.CreatePathOrFile import *
 
 
@@ -74,46 +74,42 @@ def read_file(file_path, start_line=None, end_line=None, line_number=False):
     return executor.execute()
 
 def write_file(file_path, edits=None, code_chunk=None, legacy_text_result=False):
-    if not file_path:
+    if code_chunk is not None:
         return {
             "ok": False,
             "tool": "write_file",
-            "error_type": "invalid_arguments",
-            "error": "file_path 不能为空",
-            "hint": "请传入目标文件路径，例如: write_file('./main.py', edits='[...]')",
+            "error_code": "invalid_arguments",
+            "error": "write_file 已切换到 v2 内核，不再支持 code_chunk",
+            "retryable": True,
+            "suggested_action": "use_edits_json_then_retry",
+            "diagnostics": [],
         }
-    if edits is None and code_chunk is None:
-        return {
-            "ok": False,
-            "tool": "write_file",
-            "error_type": "invalid_arguments",
-            "error": "edits 和 code_chunk 不能同时为空",
-            "hint": "优先传 edits(JSON)，例如 [{'op':'replace','s':3,'e':4,'t':'...'}]",
-        }
-    if edits is not None and code_chunk is not None:
-        return {
-            "ok": False,
-            "tool": "write_file",
-            "error_type": "invalid_arguments",
-            "error": "edits 和 code_chunk 不能同时提供",
-            "hint": "请二选一；推荐使用 edits(JSON) 主协议。",
-        }
-    try:
-        executor = writeFileExecutor.from_payload(
-            file_path=file_path,
-            edits_payload=edits,
-            code_chunk=code_chunk,
-            legacy_text_result=legacy_text_result,
-        )
-    except Exception as err:
-        return {
-            "ok": False,
-            "tool": "write_file",
-            "error_type": "invalid_arguments",
-            "error": str(err),
-            "hint": "请优先使用 edits(JSON) 且保证字符串中的换行使用 \\n 转义；或改用符合 chunk 协议的 code_chunk。",
-        }
-    return executor.execute()
+    # 直接使用 v2 内核，保留 write_file 入口名以兼容调用方
+    return write_file_v2_execute(
+        file_path=file_path,
+        edits=edits,
+    )
+
+
+def write_file_v2(
+    file_path,
+    edits=None,
+    encoding="utf-8",
+    request_id=None,
+    dry_run=False,
+    return_patch=False,
+    conflict_mode="strict",
+):
+    return write_file_v2_execute(
+        file_path=file_path,
+        edits=edits,
+        encoding=encoding,
+        request_id=request_id,
+        dry_run=dry_run,
+        return_patch=return_patch,
+        conflict_mode=conflict_mode,
+    )
+
 
 def create_path_or_file(path, is_file=False):
     executor = createPathOrFileExecutor(path=path, is_file=is_file)
@@ -153,7 +149,8 @@ tools_docs = {
     'cmd': cmd_docs,
     'list_dir': ListDir_docs,
     'read_file': ReadFile_docs,
-    'write_file': WriteFile_docs,
+    'write_file': WriteFileV2_docs,
+    'write_file_v2': WriteFileV2_docs,
     'create_path_or_file': createPathOrFile_docs
 }
 
@@ -162,7 +159,8 @@ tools_title = {
     'cmd': cmd_title,
     'list_dir': ListDir_title,
     'read_file': ReadFile_title,
-    'write_file': WriteFile_title,
+    'write_file': WriteFileV2_title,
+    'write_file_v2': WriteFileV2_title,
     'create_path_or_file': createPathOrFile_title
 }
 
@@ -171,6 +169,7 @@ tools_func = {
     'list_dir': list_dir,
     'read_file': read_file,
     'write_file': write_file,
+    'write_file_v2': write_file_v2,
     'create_path_or_file': create_path_or_file,
     'tool_docs': tool_docs
 }
