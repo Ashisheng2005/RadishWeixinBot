@@ -70,6 +70,9 @@ Shared tool policy:
 5. If a tool call returns invalid_arguments, fix parameters and retry with a new call.
 6. When using `write_file`, prefer edits(JSON) as primary protocol and compact fields (`op/s/e/t`); use `code_chunk` only as compatibility fallback.
 7. For `write_file` calls, return only the tool call without extra explanation.
+8. If you need to create a brand-new large file (for example SQL/script content > 20 lines), prefer one-shot shell heredoc via `cmd` instead of many `write_file` retries.
+9. For `create_path_or_file`, if target is a file path, you must pass `is_file=True`.
+10. In large script generation, do NOT mix `cmd` and `write_file` in the same attempt unless previous command failed.
 
 Mode-specific tool policy:
 - ask mode:
@@ -85,7 +88,10 @@ Mode-specific tool policy:
 
 The current directory location is `{current_dir}`. Please pay attention to path concatenation when using the tools.
 When you need to use a certain tool, please follow the following format:
-<tools> (Parameters) </tools>
+<tools>tool_name(arg1, key='value')</tools>
+Do not wrap all arguments as one JSON string literal.
+For long `write_file` content, split into multiple short calls.
+For large new file generation, prefer `cmd('cat > /path/to/file << \'EOF\' ... EOF')` once.
 If you don't need to use any tools, there is no need to reply with the relevant content.
 """
 

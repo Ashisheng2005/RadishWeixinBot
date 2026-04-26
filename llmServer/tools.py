@@ -98,12 +98,21 @@ def write_file(file_path, edits=None, code_chunk=None, legacy_text_result=False)
             "error": "edits 和 code_chunk 不能同时提供",
             "hint": "请二选一；推荐使用 edits(JSON) 主协议。",
         }
-    executor = writeFileExecutor.from_payload(
-        file_path=file_path,
-        edits_payload=edits,
-        code_chunk=code_chunk,
-        legacy_text_result=legacy_text_result,
-    )
+    try:
+        executor = writeFileExecutor.from_payload(
+            file_path=file_path,
+            edits_payload=edits,
+            code_chunk=code_chunk,
+            legacy_text_result=legacy_text_result,
+        )
+    except Exception as err:
+        return {
+            "ok": False,
+            "tool": "write_file",
+            "error_type": "invalid_arguments",
+            "error": str(err),
+            "hint": "请优先使用 edits(JSON) 且保证字符串中的换行使用 \\n 转义；或改用符合 chunk 协议的 code_chunk。",
+        }
     return executor.execute()
 
 def create_path_or_file(path, is_file=False):

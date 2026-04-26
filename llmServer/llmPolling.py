@@ -47,15 +47,21 @@ class Polling():
         self.response_max_tokens_qa = int(self.config.get_nested(llm, "RESPONSE_MAX_TOKENS_QA", default=600))
         self.response_max_tokens_tool = int(self.config.get_nested(llm, "RESPONSE_MAX_TOKENS_TOOL", default=1200))
         self.response_max_tokens_code = int(self.config.get_nested(llm, "RESPONSE_MAX_TOKENS_CODE", default=1800))
+        self.response_max_tokens_large_write = int(
+            self.config.get_nested(llm, "RESPONSE_MAX_TOKENS_LARGE_WRITE", default=3200)
+        )
         self.context_summary_max_chars = int(self.config.get_nested(llm, "CONTEXT_SUMMARY_MAX_CHARS", default=800))
         self.tool_retry_limit = int(self.config.get_nested(llm, "TOOL_RETRY_LIMIT", default=1))
+        self.malformed_tool_call_retry_limit = int(
+            self.config.get_nested(llm, "MALFORMED_TOOL_CALL_RETRY_LIMIT", default=2)
+        )
         self.wiki_retrieval_top_k = int(self.config.get_nested(llm, "WIKI_RETRIEVAL_TOP_K", default=5))
         self.enable_wiki_retrieval = self._parse_bool(self.config.get_nested(llm, "ENABLE_WIKI_RETRIEVAL", default=True))
         self.metrics_enabled = self._parse_bool(self.config.get_nested(llm, "METRICS_ENABLED", default=True))
         self.enable_tool_docs_soft_check = self._parse_bool(
             self.config.get_nested(llm, "ENABLE_TOOL_DOCS_SOFT_CHECK", default=True)
         )
-        self.max_tools_per_round = int(self.config.get_nested(llm, "MAX_TOOLS_PER_ROUND", default=3))
+        self.default_max_tools_per_round = int(self.config.get_nested(llm, "MAX_TOOLS_PER_ROUND", default=3))
         self.empty_reply_retry_limit = int(self.config.get_nested(llm, "EMPTY_REPLY_RETRY_LIMIT", default=2))
         self.read_file_allowlist = {
             x.strip().lower()
@@ -96,11 +102,14 @@ class Polling():
         self.context = []
         self.context_summary = ""
         self.cmd_encoding = self.config.get_nested(llm, "CMD_ENCODING", default=locale.getpreferredencoding(False) or "utf-8")
-        self.max_tool_rounds = 10
+        self.default_max_tool_rounds = int(self.config.get_nested(llm, "MAX_TOOL_ROUNDS", default=10))
+        self.max_tools_per_round = self.default_max_tools_per_round
+        self.max_tool_rounds = self.default_max_tool_rounds
         self.verbose = bool(verbose)
         self.debug = bool(debug)
         self.status_callback = status_callback
         self.last_intent_mode = "ask"
+        self.mode_override = None
 
         if self.api_key is None:
             raise ValueError("未设置 API 密钥，请在环境变量中配置 OPENAI_API_KEY 或 DEEPSEEK_API_KEY，或者在初始化时传入 api_key 参数。")
@@ -114,7 +123,38 @@ class Polling():
         self.debug = bool(enabled)
 
     def get_mode(self):
-        return self.last_intent_mode
+        return self.mode_override or self.last_intent_mode
+
+    def set_mode(self, mode: str):
+        value = str(mode or "").strip().lower()
+        if value in {"", "auto"}:
+            self.mode_override = None
+            return "auto"
+        if value not in {"ask", "plan", "agent"}:
+            raise ValueError("mode 仅支持 ask|plan|agent|auto")
+        self.mode_override = value
+        self.last_intent_mode = value
+        return value
+
+    def set_tool_budget(self, max_tools_per_round=None, max_tool_rounds=None):
+        if max_tools_per_round is not None:
+            self.max_tools_per_round = max(1, int(max_tools_per_round))
+        if max_tool_rounds is not None:
+            self.max_tool_rounds = max(1, int(max_tool_rounds))
+
+    def reset_tool_budget(self):
+        self.max_tools_per_round = self.default_max_tools_per_round
+        self.max_tool_rounds = self.default_max_tool_rounds
+
+    def get_tool_budget(self):
+        return {
+            "max_tools_per_round": self.max_tools_per_round,
+            "max_tool_rounds": self.max_tool_rounds,
+            "defaults": {
+                "max_tools_per_round": self.default_max_tools_per_round,
+                "max_tool_rounds": self.default_max_tool_rounds,
+            },
+        }
 
     def _log(self, message: str, level: str = "info"):
         """统一日志出口：默认静默，debug 模式显示工具链细节。"""
@@ -125,7 +165,6 @@ class Polling():
         print(message)
 
     def _show_tool_indicator(self, tool_name: str):
-        """默认模式展示轻量工具提示，不展示工具回显内容。"""
         if self.debug:
             return
         print(f"tools:{tool_name}")
@@ -234,6 +273,7 @@ class Polling():
     def _build_user_prompt(self, prompt, intent_mode: str):
         """把语言、工具说明和用户问题合成一条用户输入。"""
         wiki_context = self._build_wiki_context(prompt)
+        write_hint = self._build_write_strategy_hint(prompt)
         extra_context = f"\n\nRelevant wiki snippets:\n{wiki_context}" if wiki_context else ""
         return initializationPrompt.format(
             common_prompt=commonPrompt.format(
@@ -246,13 +286,27 @@ class Polling():
                 Toolbox=self._format_tools_docs(),
                 current_dir=os.getcwd()
             ),
-            question=f"{prompt}{extra_context}",
+            question=f"{prompt}{extra_context}{write_hint}",
+        )
+
+    def _build_write_strategy_hint(self, prompt: str) -> str:
+        text = str(prompt or "").lower()
+        large_write_signals = [
+            "sql", "脚本", "script", "insert", "10万", "100000", "100k", "mock", "模拟数据",
+        ]
+        if not any(k in text for k in large_write_signals):
+            return ""
+        return (
+            "\n\nLarge-file writing strategy:\n"
+            "- If generating a brand-new multi-line script, create file with create_path_or_file(path, is_file=True).\n"
+            "- Prefer one-shot cmd heredoc to write full content.\n"
+            "- Avoid repeated write_file retries for long text; use write_file only for small incremental patches."
         )
     
     def _parse_tool_calls(self, reply):
         """用正则提取 <tools>name(args)</tools> 片段，并解析出工具名和参数。"""
         tool_pattern = re.compile(
-            r"<tools>\s*(?P<name>[a-zA-Z_][\w]*)\s*\((?P<args>.*?)\)\s*</tools>",
+            r"<tools>\s*(?P<name>[a-zA-Z_][\w]*)\s*\((?P<args>.*?)\)\s*</tool[s]?>",
             re.DOTALL,
         )
         tool_calls = []
@@ -286,6 +340,22 @@ class Polling():
                 "error_type": "invalid_arguments",
                 "message": f"工具参数解析失败: {tool_name}({arg_text})",
             }
+
+        parsed_args, parsed_kwargs = self._coerce_tool_arguments(tool_name, parsed_args, parsed_kwargs)
+
+        if tool_name == "write_file":
+            has_protocol = ("edits" in parsed_kwargs) or ("code_chunk" in parsed_kwargs)
+            if parsed_kwargs and not has_protocol:
+                return {
+                    "ok": False,
+                    "tool": "write_file",
+                    "error_type": "invalid_arguments",
+                    "message": (
+                        "write_file 参数形态不合法：需要 edits 或 code_chunk。"
+                        f"收到键: {sorted(parsed_kwargs.keys())}"
+                    ),
+                    "hint": "推荐格式：write_file(file_path='...', edits='[{\"op\":\"insert\",\"s\":1,\"t\":\"...\"}]')",
+                }
 
         if tool_name == "read_file":
             candidate_path = ""
@@ -340,6 +410,103 @@ class Polling():
             kwargs[keyword.arg] = ast.literal_eval(keyword.value)
 
         return args, kwargs
+
+    def _coerce_tool_arguments(self, tool_name: str, args: tuple, kwargs: dict):
+        """兼容模型把参数整体封装成 JSON 字符串的调用风格。"""
+        coerced_args = tuple(args)
+        coerced_kwargs = dict(kwargs)
+
+        # 兼容：tool('{"path":"...","type":"file"}')
+        if len(coerced_args) == 1 and not coerced_kwargs and isinstance(coerced_args[0], str):
+            raw = coerced_args[0].strip()
+            if raw.startswith("{") and raw.endswith("}"):
+                try:
+                    payload = json.loads(raw)
+                except Exception:
+                    payload = None
+                if isinstance(payload, dict):
+                    coerced_args = tuple()
+                    coerced_kwargs = payload
+
+        # 关键字别名归一化
+        if "path" in coerced_kwargs and "file_path" not in coerced_kwargs and tool_name in {"read_file", "write_file"}:
+            coerced_kwargs["file_path"] = coerced_kwargs.pop("path")
+
+        if tool_name == "create_path_or_file":
+            # 若只给出 path，且看起来是文件路径（存在扩展名），默认按文件创建，避免误创建目录。
+            if len(coerced_args) == 1 and not coerced_kwargs:
+                path_text = str(coerced_args[0])
+                suffix = Path(path_text).suffix
+                if suffix:
+                    coerced_kwargs["path"] = path_text
+                    coerced_kwargs["is_file"] = True
+                    coerced_args = tuple()
+            if "type" in coerced_kwargs and "is_file" not in coerced_kwargs:
+                coerced_kwargs["is_file"] = str(coerced_kwargs.pop("type")).strip().lower() == "file"
+            return coerced_args, coerced_kwargs
+
+        if tool_name == "write_file":
+            # 兼容错误写法：write_file(path, 'op=insert', 's=1', 't=...')
+            if len(coerced_args) >= 2 and isinstance(coerced_args[0], str):
+                pseudo_pairs = {}
+                all_pairs = True
+                for item in coerced_args[1:]:
+                    if not isinstance(item, str) or "=" not in item:
+                        all_pairs = False
+                        break
+                    key, val = item.split("=", 1)
+                    pseudo_pairs[key.strip()] = val.strip()
+                if all_pairs and pseudo_pairs and "edits" not in coerced_kwargs and "code_chunk" not in coerced_kwargs:
+                    start_line = 1
+                    if str(pseudo_pairs.get("s", "1")).isdigit():
+                        start_line = int(str(pseudo_pairs.get("s", "1")))
+                    edit_obj = {
+                        "op": pseudo_pairs.get("op", "insert"),
+                        "s": start_line,
+                        "t": pseudo_pairs.get("t", ""),
+                    }
+                    e_val = pseudo_pairs.get("e")
+                    if e_val and str(e_val).isdigit():
+                        edit_obj["e"] = int(e_val)
+                    coerced_kwargs["file_path"] = coerced_args[0]
+                    coerced_kwargs["edits"] = json.dumps([edit_obj], ensure_ascii=False)
+                    coerced_args = tuple()
+
+            if "content" in coerced_kwargs and "code_chunk" not in coerced_kwargs:
+                coerced_kwargs["code_chunk"] = coerced_kwargs.pop("content")
+
+            # 兼容 kwargs 紧凑写法：write_file(path='a.py', op='insert', s=1, t='...')
+            if (
+                "edits" not in coerced_kwargs
+                and "code_chunk" not in coerced_kwargs
+                and "op" in coerced_kwargs
+            ):
+                op_val = str(coerced_kwargs.get("op", "")).strip().lower()
+                file_path_val = coerced_kwargs.get("file_path")
+                if file_path_val is None and coerced_args and isinstance(coerced_args[0], str):
+                    file_path_val = coerced_args[0]
+
+                if op_val in {"insert", "replace", "delete"} and file_path_val:
+                    raw_start = coerced_kwargs.get("s", coerced_kwargs.get("start_line", 1))
+                    start_line = int(raw_start) if str(raw_start).isdigit() else 1
+                    raw_end = coerced_kwargs.get("e", coerced_kwargs.get("end_line"))
+                    end_line = int(raw_end) if raw_end is not None and str(raw_end).isdigit() else None
+                    new_text = coerced_kwargs.get("t", coerced_kwargs.get("new_text", ""))
+
+                    edit = {"op": op_val, "s": start_line}
+                    if end_line is not None:
+                        edit["e"] = end_line
+                    if op_val != "delete":
+                        edit["t"] = str(new_text)
+
+                    coerced_kwargs = {
+                        "file_path": str(file_path_val),
+                        "edits": json.dumps([edit], ensure_ascii=False),
+                    }
+                    coerced_args = tuple()
+            return coerced_args, coerced_kwargs
+
+        return coerced_args, coerced_kwargs
 
     def _normalize_tool_result(self, tool_name, result):
         """统一工具返回结构，避免模型在下一轮消费非结构化文本。"""
@@ -575,11 +742,22 @@ class Polling():
 
     def _choose_response_profile(self, prompt: str):
         p = (prompt or "").lower()
+        if self._is_large_write_task(prompt):
+            return self.response_max_tokens_large_write, self.max_output_chars_code, "large_write"
         if any(k in p for k in ["代码", "code", "函数", "class", "bug", "报错"]):
             return self.response_max_tokens_code, self.max_output_chars_code, "code"
         if any(k in p for k in ["工具", "tool", "<tools>", "命令", "目录", "文件"]):
             return self.response_max_tokens_tool, self.max_output_chars_tool, "tool"
         return self.response_max_tokens_qa, self.max_output_chars_qa, "qa"
+
+    def _is_large_write_task(self, prompt: str) -> bool:
+        text = str(prompt or "").lower()
+        signals = ["sql", "脚本", "script", "insert", "10万", "100000", "100k", "mock", "模拟数据"]
+        return any(k in text for k in signals)
+
+    def _looks_like_heredoc_write(self, arg_text: str) -> bool:
+        text = str(arg_text or "")
+        return ("cat >" in text or "cat >>" in text) and "<<" in text
 
     def _record_metrics(self, payload: dict):
         if not self.metrics_enabled:
@@ -594,9 +772,29 @@ class Polling():
         except Exception:
             pass
     
-    def sendinfo(self, prompt, temperature=0.7, max_tokens=4000):
+    def sendinfo(
+        self,
+        prompt,
+        temperature=0.7,
+        max_tokens=4000,
+        max_tools_per_round=None,
+        max_tool_rounds=None,
+        mode=None,
+    ):
         # 先把用户问题整理成完整任务说明，再进入模型轮转。
-        self.last_intent_mode = self._detect_intent_mode(prompt)
+        if mode is not None:
+            requested_mode = str(mode).strip().lower()
+            if requested_mode not in {"ask", "plan", "agent"}:
+                raise ValueError("mode 参数仅支持 ask|plan|agent")
+            self.last_intent_mode = requested_mode
+        elif self.mode_override in {"ask", "plan", "agent"}:
+            self.last_intent_mode = self.mode_override
+        else:
+            self.last_intent_mode = self._detect_intent_mode(prompt)
+
+        effective_max_tools_per_round = self.max_tools_per_round if max_tools_per_round is None else max(1, int(max_tools_per_round))
+        effective_max_tool_rounds = self.max_tool_rounds if max_tool_rounds is None else max(1, int(max_tool_rounds))
+
         user_prompt = self._build_user_prompt(prompt, self.last_intent_mode)
         self.context.append({"role": "user", "content": user_prompt})
         messages = self._build_messages()
@@ -608,11 +806,13 @@ class Polling():
         duplicate_tool_calls = 0
         total_tool_result_chars = 0
         invalid_arg_retries = 0
+        malformed_tool_call_retries = 0
         empty_reply_retries = 0
         empty_reply_count = 0
+        large_write_cmd_succeeded = False
         per_round_docs_seen = set()
         round_tool_cache = {}
-        for _ in range(self.max_tool_rounds):
+        for _ in range(effective_max_tool_rounds):
             tool_round_count += 1
 
             # print(f"第 {_ + 1} 轮模型交互，当前上下文消息: {messages}\n\n")
@@ -664,12 +864,19 @@ class Polling():
 
             tool_calls = self._parse_tool_calls(reply)
             if "<tools>" in str(reply) and not tool_calls:
+                malformed_tool_call_retries += 1
+                if malformed_tool_call_retries > self.malformed_tool_call_retry_limit:
+                    return (
+                        "检测到连续工具调用格式异常（疑似长参数截断）。"
+                        "请缩小单次 write_file 内容并分块写入，或提高 RESPONSE_MAX_TOKENS_CODE/TOOL 后重试。"
+                    )
                 self.context.append(
                     {
                         "role": "user",
                         "content": (
                             "工具调用格式错误：请严格使用 `<tools>tool_name(args)</tools>`，"
                             "仅输出一个合法工具调用，不要包含解释文本。"
+                            "如果 write_file 内容较长，请分块写入，每次只提交一个较短的工具调用。"
                         ),
                     }
                 )
@@ -682,6 +889,8 @@ class Polling():
                         "event": "chat_complete",
                         "profile": profile_name,
                         "tool_round_count": tool_round_count,
+                        "max_tool_rounds": effective_max_tool_rounds,
+                        "max_tools_per_round": effective_max_tools_per_round,
                         "tool_calls": total_tool_calls,
                         "duplicate_tool_calls": duplicate_tool_calls,
                         "duplicate_tool_call_rate": round(duplicate_tool_calls / total_tool_calls, 4) if total_tool_calls else 0.0,
@@ -696,10 +905,43 @@ class Polling():
 
             # print(f"调用工具: {[call['name'] for call in tool_calls]}")
             # 把工具调用结果回填给模型，进入下一轮继续生成最终回复。
-            for tool_call in tool_calls[: self.max_tools_per_round]:
+            for tool_call in tool_calls[: effective_max_tools_per_round]:
                 total_tool_calls += 1
                 self._show_tool_indicator(tool_call["name"])
                 cache_key = f"{tool_call['name']}::{tool_call['args']}"
+
+                if (
+                    profile_name == "large_write"
+                    and large_write_cmd_succeeded
+                    and tool_call["name"] == "write_file"
+                ):
+                    tool_result = {
+                        "ok": False,
+                        "tool": "write_file",
+                        "error_type": "invalid_arguments",
+                        "error": "大文件任务中已通过 cmd/heredoc 成功写入，禁止继续混用 write_file。",
+                        "hint": "请改用 read_file 验证文件内容并直接给出总结。",
+                    }
+                    self.context.append(
+                        {
+                            "role": "user",
+                            "content": (
+                                "工具返回结果(JSON): "
+                                + json.dumps(
+                                    {
+                                        "tool": tool_call["name"],
+                                        "args": tool_call["args"],
+                                        "result": tool_result,
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            ),
+                        }
+                    )
+                    total_tool_result_chars += len(json.dumps(tool_result, ensure_ascii=False))
+                    self._log(f"工具结果: {tool_call['name']} -> \n{tool_result}", level="debug")
+                    continue
+
                 if cache_key in round_tool_cache:
                     duplicate_tool_calls += 1
                     tool_result = dict(round_tool_cache[cache_key])
@@ -707,6 +949,15 @@ class Polling():
                 else:
                     tool_result = self._run_tool(tool_call["name"], tool_call["args"])
                     round_tool_cache[cache_key] = dict(tool_result) if isinstance(tool_result, dict) else {"ok": True, "result": tool_result}
+
+                if (
+                    profile_name == "large_write"
+                    and tool_call["name"] == "cmd"
+                    and isinstance(tool_result, dict)
+                    and tool_result.get("ok") is True
+                    and self._looks_like_heredoc_write(tool_call.get("args", ""))
+                ):
+                    large_write_cmd_succeeded = True
                 if tool_call["name"] == "tool_docs":
                     per_round_docs_seen.update(self._extract_tool_names_from_docs_args(tool_call["args"]))
 
@@ -765,7 +1016,9 @@ class Polling():
             {
                 "event": "tool_round_limit",
                 "profile": profile_name,
-                "tool_round_count": self.max_tool_rounds,
+                "tool_round_count": effective_max_tool_rounds,
+                "max_tool_rounds": effective_max_tool_rounds,
+                "max_tools_per_round": effective_max_tools_per_round,
                 "tool_calls": total_tool_calls,
                 "duplicate_tool_calls": duplicate_tool_calls,
                 "duplicate_tool_call_rate": round(duplicate_tool_calls / total_tool_calls, 4) if total_tool_calls else 0.0,

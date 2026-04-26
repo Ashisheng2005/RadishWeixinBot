@@ -1,7 +1,6 @@
 from wxauto import WeChat
 from wxauto.msgs import FriendMessage
-import time
-import logging
+for i in range(5):\\n    print(i)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
