@@ -1,1 +1,0 @@
-测试write_file工具
