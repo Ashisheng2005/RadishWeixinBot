@@ -80,23 +80,6 @@ def read_file(file_path, start_line=None, end_line=None, line_number=False):
     executor = readFileExecutor(file_path=file_path, start_line=start_line, end_line=end_line, line_number=line_number)
     return executor.execute()
 
-# def write_file(file_path, edits=None, code_chunk=None, legacy_text_result=False):
-#     if code_chunk is not None:
-#         return {
-#             "ok": False,
-#             "tool": "write_file",
-#             "error_code": "invalid_arguments",
-#             "error": "write_file 已切换到 v2 内核，不再支持 code_chunk",
-#             "retryable": True,
-#             "suggested_action": "use_edits_json_then_retry",
-#             "diagnostics": [],
-#         }
-#     # 直接使用 v2 内核，保留 write_file 入口名以兼容调用方
-#     return write_file_v2_execute(
-#         file_path=file_path,
-#         edits=edits,
-#     )
-
 
 def write_file_v2(
     file_path,
@@ -118,6 +101,19 @@ def write_file_v2(
         dry_run=dry_run,
         return_patch=return_patch,
         conflict_mode=conflict_mode,
+    )
+
+def raw_write_file(
+    file_path,
+    content,
+    encoding="utf-8"
+):
+    print(f"llm raw write {file_path}")
+
+    return write_file_raw_execute(
+        file_path=file_path,
+        content=content,
+        encoding=encoding
     )
 
 
@@ -161,8 +157,8 @@ tools_docs = {
     'cmd': cmd_docs,
     'list_dir': ListDir_docs,
     'read_file': ReadFile_docs,
-    # 'write_file': WriteFileV2_docs,
     'write_file': WriteFileV2_docs,
+    'raw_write_file': WriteFileRaw_docs,
     'create_path_or_file': createPathOrFile_docs
 }
 
@@ -171,8 +167,8 @@ tools_title = {
     'cmd': cmd_title,
     'list_dir': ListDir_title,
     'read_file': ReadFile_title,
-    # 'write_file': WriteFileV2_title,
     'write_file': WriteFileV2_title,
+    'raw_write_file': WriteFileRaw_title,
     'create_path_or_file': createPathOrFile_title
 }
 
@@ -180,8 +176,8 @@ tools_func = {
     'cmd': cmd,
     'list_dir': list_dir,
     'read_file': read_file,
-    # 'write_file': write_file,
     'write_file': write_file_v2,
+    'raw_write_file': raw_write_file,
     'create_path_or_file': create_path_or_file,
     'tool_docs': tool_docs
 }

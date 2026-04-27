@@ -1,6 +1,26 @@
 import argparse
 import traceback
 import time
+import sys
+
+try:
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.history import InMemoryHistory
+    from prompt_toolkit.patch_stdout import patch_stdout
+    from prompt_toolkit.formatted_text import ANSI
+except Exception:
+    PromptSession = None
+    InMemoryHistory = None
+
+    def patch_stdout():
+        class _NullContext:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        return _NullContext()
 
 from llmPolling import Polling
 
@@ -27,7 +47,45 @@ def build_parser():
     return parser
 
 
+def _reconfigure_stdio():
+    for stream_name in ("stdin", "stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is None or not hasattr(stream, "reconfigure"):
+            continue
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
+def _colorize_status(msg: str) -> str:
+    lower_msg = msg.lower()
+    if any(token in lower_msg for token in ("[error]", "error", "失败", "异常", "错误")):
+        return f"\033[91m{msg}\033[0m"
+    if any(token in lower_msg for token in ("[warn]", "warn", "警告", "注意")):
+        return f"\033[93m{msg}\033[0m"
+    if any(token in lower_msg for token in ("重试", "处理中", "正在", "调用工具", "工具", "loading")):
+        return f"\033[96m{msg}\033[0m"
+    return f"\033[90m{msg}\033[0m"
+
+
+def _mode_label(mode: str) -> str:
+    color_map = {
+        "ask": "\033[92m",
+        "plan": "\033[93m",
+        "agent": "\033[95m",
+        "auto": "\033[96m",
+    }
+    color = color_map.get(mode, "\033[95m")
+    return f"{color}{mode}\033[0m"
+
+
+def _build_prompt(bot) -> str:
+    return f"({_mode_label(bot.get_mode())}{'-debug' if bot.debug else ''}) Radish AI > "
+
+
 def main():
+    _reconfigure_stdio()
     args = build_parser().parse_args()
     last_status = {"message": ""}
 
@@ -36,11 +94,11 @@ def main():
         if msg == last_status["message"]:
             return
         last_status["message"] = msg
-        print(msg)
+        print(_colorize_status(msg))
 
     bot = Polling(verbose=args.verbose, debug=args.debug, status_callback=on_status)
 
-    print("{:-^130}".format(" \033[91mRadish AI Console \033[0m"))
+    print("{:-^130}".format("\033[94m Radish AI Console \033[0m"))
 
     # 模拟加载过程，展示彩色进度条
     for i in range(101):
@@ -58,94 +116,103 @@ def main():
     print("{:^120}".format("\033[95mCiallo~ 输入 /help 查看命令，/exit 退出。\033[0m") )
     print("-" * 121)
 
-    while True:
-        try:
-            user_input = input(f"(\033[92m{bot.get_mode()}\033[0m) Radish AI > ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\nBye.")
-            break
+    prompt_session = None
+    if PromptSession is not None and InMemoryHistory is not None:
+        prompt_session = PromptSession(history=InMemoryHistory())
 
-        if not user_input:
-            continue
+    with patch_stdout():
+        while True:
+            try:
+                prompt = _build_prompt(bot)
+                if prompt_session is not None:
+                    user_input = prompt_session.prompt(ANSI(prompt)).strip()
+                else:
+                    user_input = input(prompt).strip()
+            except (EOFError, KeyboardInterrupt):
+                print("\nBye.")
+                break
 
-        if user_input == "/exit":
-            print("Bye. see you next time!")
-            break
-        if user_input == "/help":
-            print(HELP_TEXT)
-            continue
-        if user_input.startswith("/mode"):
-            parts = user_input.split()
-            if len(parts) == 1:
-                print(f"当前模式: {bot.get_mode()}")
+            if not user_input:
                 continue
-            if len(parts) == 2:
-                try:
-                    value = bot.set_mode(parts[1])
-                    print(f"模式已切换为: {value}")
-                except Exception as err:
-                    print(f"模式切换失败: {err}")
-            else:
-                print("用法: /mode 或 /mode ask|plan|agent|auto")
-            continue
 
-        if user_input.startswith("/budget"):
-            parts = user_input.split()
-            if len(parts) == 1:
-                budget = bot.get_tool_budget()
-                print(
-                    "当前预算: "
-                    f"max_tools_per_round={budget['max_tools_per_round']}, "
-                    f"max_tool_rounds={budget['max_tool_rounds']}"
-                )
-                print(
-                    "默认预算: "
-                    f"max_tools_per_round={budget['defaults']['max_tools_per_round']}, "
-                    f"max_tool_rounds={budget['defaults']['max_tool_rounds']}"
-                )
+            if user_input == "/exit":
+                print("Bye. see you next time!")
+                break
+            if user_input == "/help":
+                print(HELP_TEXT)
                 continue
-            if len(parts) == 2 and parts[1] == "reset":
-                bot.reset_tool_budget()
-                print("预算已重置为默认值。")
+            if user_input.startswith("/mode"):
+                parts = user_input.split()
+                if len(parts) == 1:
+                    print(f"当前模式: {bot.get_mode()}")
+                    continue
+                if len(parts) == 2:
+                    try:
+                        value = bot.set_mode(parts[1])
+                        print(f"模式已切换为: {value}")
+                    except Exception as err:
+                        print(f"模式切换失败: {err}")
+                else:
+                    print("用法: /mode 或 /mode ask|plan|agent|auto")
                 continue
-            if len(parts) == 3 and parts[1] in {"rounds", "per_round"}:
-                try:
-                    num = int(parts[2])
-                    if num < 1:
-                        raise ValueError("必须为正整数")
-                    if parts[1] == "rounds":
-                        bot.set_tool_budget(max_tool_rounds=num)
-                    else:
-                        bot.set_tool_budget(max_tools_per_round=num)
-                    print("预算已更新。")
-                except Exception as err:
-                    print(f"预算设置失败: {err}")
-                continue
-            print("用法: /budget | /budget rounds N | /budget per_round N | /budget reset")
-            continue
-        if user_input == "/clear":
-            bot.clear_context()
-            last_status["message"] = ""
-            print("会话已清空。")
-            continue
-        if user_input.startswith("/debug"):
-            parts = user_input.split()
-            if len(parts) == 2 and parts[1] in {"on", "off"}:
-                enabled = parts[1] == "on"
-                bot.set_debug(enabled)
-                print(f"debug 已{'开启' if enabled else '关闭'}。")
-            else:
-                print("用法: /debug on|off")
-            continue
 
-        try:
-            reply = bot.sendinfo(user_input, temperature=0.2, max_tokens=3600)
-            last_status["message"] = ""
-            print(reply)
-        except Exception as err:
-            print(f"[error] {err}")
-            if bot.debug:
-                traceback.print_exc()
+            if user_input.startswith("/budget"):
+                parts = user_input.split()
+                if len(parts) == 1:
+                    budget = bot.get_tool_budget()
+                    print(
+                        "当前预算: "
+                        f"max_tools_per_round={budget['max_tools_per_round']}, "
+                        f"max_tool_rounds={budget['max_tool_rounds']}"
+                    )
+                    print(
+                        "默认预算: "
+                        f"max_tools_per_round={budget['defaults']['max_tools_per_round']}, "
+                        f"max_tool_rounds={budget['defaults']['max_tool_rounds']}"
+                    )
+                    continue
+                if len(parts) == 2 and parts[1] == "reset":
+                    bot.reset_tool_budget()
+                    print("预算已重置为默认值。")
+                    continue
+                if len(parts) == 3 and parts[1] in {"rounds", "per_round"}:
+                    try:
+                        num = int(parts[2])
+                        if num < 1:
+                            raise ValueError("必须为正整数")
+                        if parts[1] == "rounds":
+                            bot.set_tool_budget(max_tool_rounds=num)
+                        else:
+                            bot.set_tool_budget(max_tools_per_round=num)
+                        print("预算已更新。")
+                    except Exception as err:
+                        print(f"预算设置失败: {err}")
+                    continue
+                print("用法: /budget | /budget rounds N | /budget per_round N | /budget reset")
+                continue
+            if user_input == "/clear":
+                bot.clear_context()
+                last_status["message"] = ""
+                print("会话已清空。")
+                continue
+            if user_input.startswith("/debug"):
+                parts = user_input.split()
+                if len(parts) == 2 and parts[1] in {"on", "off"}:
+                    enabled = parts[1] == "on"
+                    bot.set_debug(enabled)
+                    print(f"debug 已{'开启' if enabled else '关闭'}。")
+                else:
+                    print("用法: /debug on|off")
+                continue
+
+            try:
+                reply = bot.sendinfo(user_input, temperature=0.2, max_tokens=3600)
+                last_status["message"] = ""
+                print(reply)
+            except Exception as err:
+                print(f"[error] {err}")
+                if bot.debug:
+                    traceback.print_exc()
 
 
 if __name__ == "__main__":
