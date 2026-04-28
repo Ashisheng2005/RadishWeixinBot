@@ -206,7 +206,7 @@ def main():
                 continue
 
             try:
-                reply = bot.sendinfo(user_input, temperature=0.2, max_tokens=3600)
+                reply, usage_dict = bot.sendinfo(user_input, temperature=0.2, max_tokens=3600)
                 last_status["message"] = ""
                 print(reply)
             except Exception as err:
@@ -217,3 +217,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+    # 兼容启动脚本，直接运行 console.py 即可进入交互式控制台
+    # if len(sys.argv) > 1 and sys.argv[1] == "radish":
+        # main()
+    # else:
+        # print("请使用 'python console.py console' 启动 Radish AI 交互控制台。")

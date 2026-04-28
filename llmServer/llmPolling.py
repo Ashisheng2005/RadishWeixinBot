@@ -18,7 +18,9 @@ from promptTemplate import (
     toolboxPrompt,
     wikiPrompt,
 )
-# from CreateCodeNode import CreateCodeNodeExecutor
+
+# from pollTools import *
+import pollTools as pts
 
 from deepseek import DeepSeek
 
@@ -56,9 +58,9 @@ class Polling():
             self.config.get_nested(llm, "MALFORMED_TOOL_CALL_RETRY_LIMIT", default=2)
         )
         self.wiki_retrieval_top_k = int(self.config.get_nested(llm, "WIKI_RETRIEVAL_TOP_K", default=5))
-        self.enable_wiki_retrieval = self._parse_bool(self.config.get_nested(llm, "ENABLE_WIKI_RETRIEVAL", default=True))
-        self.metrics_enabled = self._parse_bool(self.config.get_nested(llm, "METRICS_ENABLED", default=True))
-        self.enable_tool_docs_soft_check = self._parse_bool(
+        self.enable_wiki_retrieval = pts.parse_bool(self.config.get_nested(llm, "ENABLE_WIKI_RETRIEVAL", default=True))
+        self.metrics_enabled = pts.parse_bool(self.config.get_nested(llm, "METRICS_ENABLED", default=True))
+        self.enable_tool_docs_soft_check = pts.parse_bool(
             self.config.get_nested(llm, "ENABLE_TOOL_DOCS_SOFT_CHECK", default=True)
         )
         self.default_max_tools_per_round = int(self.config.get_nested(llm, "MAX_TOOLS_PER_ROUND", default=3))
@@ -89,7 +91,13 @@ class Polling():
             "write_file": int(self.config.get_nested(llm, "WRITE_FILE_RESULT_MAX_CHARS", default=800)),
         }
         # print(f"使用模型: {llm}，API_KEY: {'已设置' if self.api_key else '未设置'}，BASE_URL: {self.base_url}，MODEL: {self.model}，LANGUAGE: {self.language}")
+        
 
+        # 保存每一轮的token使用情况，供 /status 查询和调试分析。
+        self.metrics_totals = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        self.metrics_rounds = []   # 每轮的明细列表
+
+        # 初始化客户端
         self.client = llmServer[llm](
             api_key=self.api_key, 
             base_url=self.base_url, 
@@ -176,26 +184,7 @@ class Polling():
                 self.status_callback(message)
             except Exception:
                 pass
-
-    def _detect_intent_mode(self, prompt: str) -> str:
-        text = (prompt or "").lower()
-
-        agent_keywords = [
-            "重写", "改写", "优化", "封装", "重构", "改造", "实现", "修复", "更新", "修改", "新增",
-            "rewrite", "refactor", "implement", "fix", "patch", "update", "modify", "create",
-            ".py", ".js", ".ts", ".md", "代码", "文件",
-        ]
-        plan_keywords = [
-            "计划", "方案", "步骤", "流程", "路线", "评估", "先不要改", "先规划",
-            "plan", "roadmap", "workflow", "steps", "design", "approach",
-        ]
-
-        if any(k in text for k in agent_keywords):
-            return "agent"
-        if any(k in text for k in plan_keywords):
-            return "plan"
-        return "ask"
-
+    
     def _is_sensitive_path(self, path_text: str) -> bool:
         if not path_text:
             return False
@@ -205,45 +194,6 @@ class Polling():
         if basename in self.read_file_allowlist:
             return False
         return any(p in normalized for p in patterns)
-    
-    def _get_system_info(self):
-        """获取系统环境信息，供模型参考。"""
-        try:
-            import platform
-            system_info = f"{platform.system()} {platform.release()} ({platform.architecture()[0]})"
-            return system_info
-        except Exception as e:
-            print(f"获取系统信息失败: {e}")
-            return "Unknown System"
-    
-    def _normalize_language(self, language):
-        """把环境变量里的 locale 值转换成模型更容易理解的自然语言描述。"""
-        language_value = (language or "").strip()
-        if not language_value:
-            return "Chinese"
-
-        language_lower = language_value.lower()
-        if language_lower in {"zh", "zh_cn", "zh-cn", "zh_hans", "chinese", "中文"}:
-            return "Chinese"
-        if language_lower in {"en", "en_us", "en-gb", "english", "英语"}:
-            return "English"
-
-        return language_value
-
-    def _parse_bool(self, value, default=False):
-        """稳健解析布尔配置，避免 bool('false') 误判为 True。"""
-        if isinstance(value, bool):
-            return value
-        if value is None:
-            return default
-        if isinstance(value, (int, float)):
-            return value != 0
-        text = str(value).strip().lower()
-        if text in {"1", "true", "yes", "on", "y"}:
-            return True
-        if text in {"0", "false", "no", "off", "n"}:
-            return False
-        return default
 
     def _format_tools_docs(self):
         """把工具字典渲染成稳定的文本，避免把 dict 原样塞给模型。"""
@@ -273,11 +223,11 @@ class Polling():
     def _build_user_prompt(self, prompt, intent_mode: str):
         """把语言、工具说明和用户问题合成一条用户输入。"""
         wiki_context = self._build_wiki_context(prompt)
-        write_hint = self._build_write_strategy_hint(prompt)
+        write_hint = pts.build_write_strategy_hint(prompt)
         extra_context = f"\n\nRelevant wiki snippets:\n{wiki_context}" if wiki_context else ""
         return initializationPrompt.format(
             common_prompt=commonPrompt.format(
-                system_info=self._get_system_info(),
+                system_info=pts.get_system_info(),
                 language=self.language,
             ),
             task_mode=intent_mode,
@@ -288,39 +238,6 @@ class Polling():
             ),
             question=f"{prompt}{extra_context}{write_hint}",
         )
-
-    def _build_write_strategy_hint(self, prompt: str) -> str:
-        text = str(prompt or "").lower()
-        large_write_signals = [
-            "sql", "脚本", "script", "insert", "10万", "100000", "100k", "mock", "模拟数据",
-        ]
-        if not any(k in text for k in large_write_signals):
-            return ""
-        return (
-            "\n\nLarge-file writing strategy:\n"
-            "- If generating a brand-new multi-line script, create file with create_path_or_file(path, is_file=True).\n"
-            "- Prefer one-shot cmd heredoc to write full content.\n"
-            "- Avoid repeated write_file retries for long text; use write_file only for small incremental patches."
-        )
-    
-    def _parse_tool_calls(self, reply):
-        """用正则提取 <tools>name(args)</tools> 片段，并解析出工具名和参数。"""
-        tool_pattern = re.compile(
-            r"<tools>\s*(?P<name>[a-zA-Z_][\w]*)\s*\((?P<args>.*?)\)\s*</tool[s]?>",
-            re.DOTALL,
-        )
-        tool_calls = []
-
-        for match in tool_pattern.finditer(reply):
-            tool_calls.append(
-                {
-                    "name": match.group("name"),
-                    "args": match.group("args").strip(),
-                    "raw": match.group(0),
-                }
-            )
-
-        return tool_calls
     
     def _run_tool(self, tool_name, arg_text):
         """执行工具调用，并尽量把参数安全地还原成 Python 实参。"""
@@ -341,7 +258,7 @@ class Polling():
                 "message": f"工具参数解析失败: {tool_name}({arg_text})",
             }
 
-        parsed_args, parsed_kwargs = self._coerce_tool_arguments(tool_name, parsed_args, parsed_kwargs)
+        parsed_args, parsed_kwargs = pts.coerce_tool_arguments(tool_name, parsed_args, parsed_kwargs)
 
         if tool_name == "write_file":
             has_protocol = ("edits" in parsed_kwargs) or ("code_chunk" in parsed_kwargs)
@@ -411,103 +328,6 @@ class Polling():
 
         return args, kwargs
 
-    def _coerce_tool_arguments(self, tool_name: str, args: tuple, kwargs: dict):
-        """兼容模型把参数整体封装成 JSON 字符串的调用风格。"""
-        coerced_args = tuple(args)
-        coerced_kwargs = dict(kwargs)
-
-        # 兼容：tool('{"path":"...","type":"file"}')
-        if len(coerced_args) == 1 and not coerced_kwargs and isinstance(coerced_args[0], str):
-            raw = coerced_args[0].strip()
-            if raw.startswith("{") and raw.endswith("}"):
-                try:
-                    payload = json.loads(raw)
-                except Exception:
-                    payload = None
-                if isinstance(payload, dict):
-                    coerced_args = tuple()
-                    coerced_kwargs = payload
-
-        # 关键字别名归一化
-        if "path" in coerced_kwargs and "file_path" not in coerced_kwargs and tool_name in {"read_file", "write_file"}:
-            coerced_kwargs["file_path"] = coerced_kwargs.pop("path")
-
-        if tool_name == "create_path_or_file":
-            # 若只给出 path，且看起来是文件路径（存在扩展名），默认按文件创建，避免误创建目录。
-            if len(coerced_args) == 1 and not coerced_kwargs:
-                path_text = str(coerced_args[0])
-                suffix = Path(path_text).suffix
-                if suffix:
-                    coerced_kwargs["path"] = path_text
-                    coerced_kwargs["is_file"] = True
-                    coerced_args = tuple()
-            if "type" in coerced_kwargs and "is_file" not in coerced_kwargs:
-                coerced_kwargs["is_file"] = str(coerced_kwargs.pop("type")).strip().lower() == "file"
-            return coerced_args, coerced_kwargs
-
-        if tool_name == "write_file":
-            # 兼容错误写法：write_file(path, 'op=insert', 's=1', 't=...')
-            if len(coerced_args) >= 2 and isinstance(coerced_args[0], str):
-                pseudo_pairs = {}
-                all_pairs = True
-                for item in coerced_args[1:]:
-                    if not isinstance(item, str) or "=" not in item:
-                        all_pairs = False
-                        break
-                    key, val = item.split("=", 1)
-                    pseudo_pairs[key.strip()] = val.strip()
-                if all_pairs and pseudo_pairs and "edits" not in coerced_kwargs and "code_chunk" not in coerced_kwargs:
-                    start_line = 1
-                    if str(pseudo_pairs.get("s", "1")).isdigit():
-                        start_line = int(str(pseudo_pairs.get("s", "1")))
-                    edit_obj = {
-                        "op": pseudo_pairs.get("op", "insert"),
-                        "s": start_line,
-                        "t": pseudo_pairs.get("t", ""),
-                    }
-                    e_val = pseudo_pairs.get("e")
-                    if e_val and str(e_val).isdigit():
-                        edit_obj["e"] = int(e_val)
-                    coerced_kwargs["file_path"] = coerced_args[0]
-                    coerced_kwargs["edits"] = json.dumps([edit_obj], ensure_ascii=False)
-                    coerced_args = tuple()
-
-            if "content" in coerced_kwargs and "code_chunk" not in coerced_kwargs:
-                coerced_kwargs["code_chunk"] = coerced_kwargs.pop("content")
-
-            # 兼容 kwargs 紧凑写法：write_file(path='a.py', op='insert', s=1, t='...')
-            if (
-                "edits" not in coerced_kwargs
-                and "code_chunk" not in coerced_kwargs
-                and "op" in coerced_kwargs
-            ):
-                op_val = str(coerced_kwargs.get("op", "")).strip().lower()
-                file_path_val = coerced_kwargs.get("file_path")
-                if file_path_val is None and coerced_args and isinstance(coerced_args[0], str):
-                    file_path_val = coerced_args[0]
-
-                if op_val in {"insert", "replace", "delete"} and file_path_val:
-                    raw_start = coerced_kwargs.get("s", coerced_kwargs.get("start_line", 1))
-                    start_line = int(raw_start) if str(raw_start).isdigit() else 1
-                    raw_end = coerced_kwargs.get("e", coerced_kwargs.get("end_line"))
-                    end_line = int(raw_end) if raw_end is not None and str(raw_end).isdigit() else None
-                    new_text = coerced_kwargs.get("t", coerced_kwargs.get("new_text", ""))
-
-                    edit = {"op": op_val, "s": start_line}
-                    if end_line is not None:
-                        edit["e"] = end_line
-                    if op_val != "delete":
-                        edit["t"] = str(new_text)
-
-                    coerced_kwargs = {
-                        "file_path": str(file_path_val),
-                        "edits": json.dumps([edit], ensure_ascii=False),
-                    }
-                    coerced_args = tuple()
-            return coerced_args, coerced_kwargs
-
-        return coerced_args, coerced_kwargs
-
     def _normalize_tool_result(self, tool_name, result):
         """统一工具返回结构，避免模型在下一轮消费非结构化文本。"""
         if isinstance(result, dict):
@@ -517,35 +337,6 @@ class Polling():
             return self._sanitize_and_trim_tool_result(tool_name, normalized)
         return self._sanitize_and_trim_tool_result(tool_name, {"ok": True, "tool": tool_name, "result": result})
 
-    def _clean_text(self, value: str) -> str:
-        """清洗工具文本：去控制字符、替换乱码占位、压缩空白。"""
-        if not isinstance(value, str):
-            value = str(value)
-        text = value.replace("\r\n", "\n")
-        text = re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F]", "", text)
-        text = text.replace("\ufffd", "?")
-        text = re.sub(r"\n{3,}", "\n\n", text)
-        return text.strip()
-
-    def _is_effectively_empty_reply(self, value: str) -> bool:
-        """判空时先去除不可见字符，避免被空白噪声误导。"""
-        if value is None:
-            return True
-        text = str(value)
-        text = re.sub(r"[\u200b\u200c\u200d\ufeff]", "", text)
-        text = re.sub(r"\s+", "", text)
-        return text == ""
-
-    def _trim_result_text(self, text: str, max_chars: int) -> str:
-        """长文本改为头尾摘要，避免大段回填挤占上下文。"""
-        if len(text) <= max_chars:
-            return text
-        head_size = max(120, int(max_chars * 0.55))
-        tail_size = max(80, max_chars - head_size - 40)
-        head = text[:head_size]
-        tail = text[-tail_size:] if tail_size > 0 else ""
-        omitted = len(text) - len(head) - len(tail)
-        return f"{head}\n... [TRUNCATED {omitted} chars] ...\n{tail}"
 
     def _sanitize_and_trim_tool_result(self, tool_name: str, payload: dict):
         """统一清洗并按工具类型裁剪 result/error/message 字段。"""
@@ -555,8 +346,8 @@ class Polling():
             normalized["result"] = self._normalize_read_file_result(normalized["result"])
         for key in ("result", "message", "error"):
             if key in normalized and normalized[key] is not None:
-                cleaned = self._clean_text(normalized[key])
-                normalized[key] = self._trim_result_text(cleaned, max_chars)
+                cleaned = pts.clean_text(normalized[key])
+                normalized[key] = pts.trim_result_text(cleaned, max_chars)
         return normalized
 
     def _normalize_read_file_result(self, value):
@@ -694,55 +485,13 @@ class Polling():
             lines.append(line)
         text = "\n".join(lines)
         if mode == "ask":
-            text = self._enforce_three_section_format(text)
-            text = self._render_natural_reply(text)
+            text = pts.enforce_three_section_format(text)
+            text = pts.render_natural_reply(text)
         return text[: max_output_chars]
-
-    def _enforce_three_section_format(self, text: str) -> str:
-        """强制归一为 Conclusion/Evidence/NextStep 三段。"""
-        line_items = [x.strip(" -*\t") for x in text.splitlines() if x.strip()]
-        sections = {"Conclusion": "", "Evidence": "", "NextStep": ""}
-        for line in line_items:
-            m = re.match(r"(?i)^(Conclusion|Evidence|NextStep)\s*:\s*(.*)$", line)
-            if m:
-                sections[m.group(1).title()] = m.group(2).strip()
-
-        if not sections["Conclusion"] and line_items:
-            sections["Conclusion"] = line_items[0]
-        if not sections["Evidence"]:
-            evidence_lines = [x for x in line_items if x != sections["Conclusion"]][:2]
-            sections["Evidence"] = "；".join(evidence_lines) if evidence_lines else "(none)"
-        if not sections["NextStep"]:
-            sections["NextStep"] = "(none)"
-
-        return (
-            f"Conclusion: {sections['Conclusion']}\n"
-            f"Evidence: {sections['Evidence']}\n"
-            f"NextStep: {sections['NextStep']}"
-        )
-
-    def _render_natural_reply(self, structured_text: str) -> str:
-        """将字段式三段内容合并为自然段落。"""
-        sections = {"Conclusion": "", "Evidence": "", "NextStep": ""}
-        for line in [x.strip() for x in structured_text.splitlines() if x.strip()]:
-            m = re.match(r"(?i)^(Conclusion|Evidence|NextStep)\s*:\s*(.*)$", line)
-            if m:
-                sections[m.group(1).title()] = m.group(2).strip()
-
-        chunks = []
-        if sections["Conclusion"] and sections["Conclusion"] != "(none)":
-            chunks.append(sections["Conclusion"])
-        if sections["Evidence"] and sections["Evidence"] != "(none)":
-            chunks.append(f"依据是：{sections['Evidence']}")
-        if sections["NextStep"] and sections["NextStep"] != "(none)":
-            chunks.append(f"下一步建议：{sections['NextStep']}")
-        if not chunks:
-            return structured_text
-        return " ".join(chunks)
 
     def _choose_response_profile(self, prompt: str):
         p = (prompt or "").lower()
-        if self._is_large_write_task(prompt):
+        if pts.is_large_write_task(prompt):
             return self.response_max_tokens_large_write, self.max_output_chars_code, "large_write"
         if any(k in p for k in ["代码", "code", "函数", "class", "bug", "报错"]):
             return self.response_max_tokens_code, self.max_output_chars_code, "code"
@@ -750,16 +499,9 @@ class Polling():
             return self.response_max_tokens_tool, self.max_output_chars_tool, "tool"
         return self.response_max_tokens_qa, self.max_output_chars_qa, "qa"
 
-    def _is_large_write_task(self, prompt: str) -> bool:
-        text = str(prompt or "").lower()
-        signals = ["sql", "脚本", "script", "insert", "10万", "100000", "100k", "mock", "模拟数据"]
-        return any(k in text for k in signals)
-
-    def _looks_like_heredoc_write(self, arg_text: str) -> bool:
-        text = str(arg_text or "")
-        return ("cat >" in text or "cat >>" in text) and "<<" in text
 
     def _record_metrics(self, payload: dict):
+        # 记录工具调用和模型回复等事件到本地文件，供后续分析改进。敏感信息会被过滤掉。
         if not self.metrics_enabled:
             return
         try:
@@ -767,6 +509,15 @@ class Polling():
             path.parent.mkdir(parents=True, exist_ok=True)
             event = dict(payload)
             event.setdefault("ts", time.time())
+
+            # 把会话级 token 汇总与按轮次明细附到事件中，优先使用当前 payload 的 usage
+            try:
+                event.setdefault("tokens", dict(self.metrics_totals))
+                event.setdefault("token_rounds", list(self.metrics_rounds))
+            except Exception:
+                event["tokens"] = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+                event["token_rounds"] = []
+
             with path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(event, ensure_ascii=False) + "\n")
         except Exception:
@@ -790,7 +541,7 @@ class Polling():
         elif self.mode_override in {"ask", "plan", "agent"}:
             self.last_intent_mode = self.mode_override
         else:
-            self.last_intent_mode = self._detect_intent_mode(prompt)
+            self.last_intent_mode = pts.detect_intent_mode(prompt)
 
         effective_max_tools_per_round = self.max_tools_per_round if max_tools_per_round is None else max(1, int(max_tools_per_round))
         effective_max_tool_rounds = self.max_tool_rounds if max_tool_rounds is None else max(1, int(max_tool_rounds))
@@ -817,17 +568,42 @@ class Polling():
 
             # print(f"第 {_ + 1} 轮模型交互，当前上下文消息: {messages}\n\n")
 
-            reply = self.client.sendinfo(
+            reply, usage_dict = self.client.sendinfo(
                 messages=messages,
                 temperature=temperature,
                 max_tokens=min(max_tokens, selected_max_tokens),
             )
             # reply = response.choices[0].message.content.strip()
 
+            # 解析并累加 token usage（兼容 provider 返回的 usage dict）
+            try:
+                u = usage_dict or {}
+                prompt_tokens = int(u.get("prompt_tokens", 0) or 0)
+                completion_tokens = int(u.get("completion_tokens", 0) or 0)
+                total_tokens = int(u.get("total_tokens", 0) or 0)
+            except Exception:
+                prompt_tokens = completion_tokens = total_tokens = 0
+
+            # 累加会话级 totals，并记录本轮明细
+            try:
+                self.metrics_totals["prompt_tokens"] += prompt_tokens
+                self.metrics_totals["completion_tokens"] += completion_tokens
+                self.metrics_totals["total_tokens"] += total_tokens
+                self.metrics_rounds.append(
+                    {
+                        "round": tool_round_count,
+                        "prompt_tokens": prompt_tokens,
+                        "completion_tokens": completion_tokens,
+                        "total_tokens": total_tokens,
+                    }
+                )
+            except Exception:
+                pass
+
             self._log(f"[polling.debug] raw_reply_repr={repr(reply)}", level="debug")
             self._log(f"{reply}\n", level="debug")
 
-            if self._is_effectively_empty_reply(reply):
+            if pts.is_effectively_empty_reply(reply):
                 empty_reply_count += 1
                 if empty_reply_retries < self.empty_reply_retry_limit:
                     empty_reply_retries += 1
@@ -862,7 +638,7 @@ class Polling():
             self.context.append({"role": "assistant", "content": reply})
             self._maybe_update_context_summary()
 
-            tool_calls = self._parse_tool_calls(reply)
+            tool_calls = pts.parse_tool_calls(reply)
             if "<tools>" in str(reply) and not tool_calls:
                 # 剔出文端中非工具调用的部分，并输出
                 print(reply.split("<tools>")[0].strip())
@@ -890,6 +666,8 @@ class Polling():
                 self._record_metrics(
                     {
                         "event": "chat_complete",
+                        "reply": reply,
+                        "usage": usage_dict,
                         "profile": profile_name,
                         "tool_round_count": tool_round_count,
                         "max_tool_rounds": effective_max_tool_rounds,
@@ -958,7 +736,7 @@ class Polling():
                     and tool_call["name"] == "cmd"
                     and isinstance(tool_result, dict)
                     and tool_result.get("ok") is True
-                    and self._looks_like_heredoc_write(tool_call.get("args", ""))
+                    and pts.looks_like_heredoc_write(tool_call.get("args", ""))
                 ):
                     large_write_cmd_succeeded = True
                 if tool_call["name"] == "tool_docs":
@@ -1018,6 +796,8 @@ class Polling():
         self._record_metrics(
             {
                 "event": "tool_round_limit",
+                "reply": reply,
+                "usage": usage_dict,
                 "profile": profile_name,
                 "tool_round_count": effective_max_tool_rounds,
                 "max_tool_rounds": effective_max_tool_rounds,
@@ -1045,18 +825,6 @@ class Polling():
     
 if __name__ == "__main__":
     polling = Polling()
-    # reply = CreateCodeNodeExecutor(code_file_path="/home/repork/project/RadishWeixinBot/llmServer/CreateCodeNode.py", wiki_file_path="./wiki/test.md",llmServer=polling.client) 
-    # reply.execute()
-    # from CreateProjectWiki import CreateProjectWikiExecutor
-    # reply = CreateProjectWikiExecutor(
-    #     project_path="/home/repork/project/RadishWeixinBot",
-    #     wiki_root="./wiki",
-    #     llm_server=polling.client,
-    #     wiki_mode=polling.wiki_mode,
-    #     summary_max_chars=polling.summary_max_chars,
-    #     summary_sample_lines=polling.summary_sample_lines,
-    # )
-    # reply.execute()
 
     # print('project wiki successful!')
     polling.sendinfo("简要分析一下这个项目，并给出优化建议")

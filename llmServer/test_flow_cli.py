@@ -173,7 +173,7 @@ def run_case(case_name: str, cfg: dict, metrics_path: Path, retry: int, project_
         started = time.time()
         log_buffer = io.StringIO()
         with redirect_stdout(log_buffer):
-            reply = polling.sendinfo(prompt, temperature=0, max_tokens=int(cfg.get("max_tokens", 1200)))
+            reply, usage_dict = polling.sendinfo(prompt, temperature=0, max_tokens=int(cfg.get("max_tokens", 1200)))
         ended = time.time()
 
         log_text = log_buffer.getvalue()

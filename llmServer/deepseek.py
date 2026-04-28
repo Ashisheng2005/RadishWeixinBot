@@ -31,13 +31,18 @@ class DeepSeek():
         # print(f"DeepSeek API response: {response}")
         # content = (response.choices[0].message.content or "")
         content = response.choices[0].message.content
+        # 统计token用量
+        # usage = getattr(response, "usage", None)
+        usage = response.usage if hasattr(response, "usage") else None
+        usage_dict = usage.model_dump() if usage else None
+
         if self.debug:
             finish_reason = response.choices[0].finish_reason
-            usage = getattr(response, "usage", None)
             print(f"[deepseek.debug] finish_reason={finish_reason}")
             print(f"[deepseek.debug] content_repr={repr(content)}")
             if usage is not None:
                 print(f"[deepseek.debug] usage={usage}")
-        return content.strip()
+
+        return content.strip(), usage_dict
     
     

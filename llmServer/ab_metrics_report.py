@@ -24,15 +24,26 @@ def summarize(events):
     metric_events = [x for x in events if x.get("event") in {"chat_complete", "tool_round_limit"}]
     if not metric_events:
         metric_events = events
+    samples = len(metric_events)
+    # tokens 汇总
+    total_prompt_tokens = sum((x.get("tokens") or {}).get("prompt_tokens", 0) for x in metric_events)
+    total_completion_tokens = sum((x.get("tokens") or {}).get("completion_tokens", 0) for x in metric_events)
+    total_tokens = sum((x.get("tokens") or {}).get("total_tokens", 0) for x in metric_events)
+
     return {
-        "samples": len(metric_events),
+        "samples": samples,
         "avg_tool_round_count": round(mean(x.get("tool_round_count", 0) for x in metric_events), 3),
         "avg_tool_calls": round(mean(x.get("tool_calls", 0) for x in metric_events), 3),
         "avg_reply_chars": round(mean(x.get("reply_chars", 0) for x in metric_events), 3),
         "avg_tool_result_chars": round(mean(x.get("avg_tool_result_chars", 0) for x in metric_events), 3),
         "duplicate_tool_call_rate": round(mean(x.get("duplicate_tool_call_rate", 0) for x in metric_events), 4),
         "format_compliance_rate": round(mean(x.get("format_compliance_rate", 0) for x in metric_events), 4),
+        "total_prompt_tokens": int(total_prompt_tokens),
+        "total_completion_tokens": int(total_completion_tokens),
+        "total_tokens": int(total_tokens),
+        "avg_total_tokens": round(total_tokens / samples, 3) if samples else 0.0,
     }
+
 
 
 def main():
